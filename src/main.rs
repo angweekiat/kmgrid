@@ -1,11 +1,11 @@
 use display_info::DisplayInfo;
+use egui::Rect;
 use enigo::{Button, Enigo, Keyboard, Mouse, Settings};
 
 use eframe::{egui, App};
 
 use eframe::egui::ViewportCommand;
 use egui::{
-    accesskit::{Point, Rect},
     pos2, vec2, Color32, Key, Pos2, Rounding, ScrollArea, Stroke, Vec2,
 };
 use std::{
@@ -49,8 +49,6 @@ enum Mode {
 }
 
 fn main() -> eframe::Result {
-    let mut enigo = Enigo::new(&Settings::default()).unwrap();
-
     let res = File::open("config.json");
     let mut res = res.expect("Config file not present!");
     let mut config = String::new();
@@ -78,6 +76,16 @@ fn main() -> eframe::Result {
         })
         .collect();
 
+    let mouse_pos = DeviceState::new().query_pointer().coords;
+    let mouse_pos = pos2(mouse_pos.0 as f32, mouse_pos.1 as f32);
+    let mut initial_display_idx = 0;
+    for (i, d) in displays.iter().enumerate() {
+        if egui::Rect::from_min_size(d.pos, d.size).contains(mouse_pos) {
+            initial_display_idx = i;
+            break;
+        }
+    }
+
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -85,9 +93,10 @@ fn main() -> eframe::Result {
             .with_mouse_passthrough(true)
             .with_always_on_top()
             .with_transparent(true)
-            //    .with_position(pos2(0.0, 0.0))
+            .with_position(displays[initial_display_idx].pos)
             .with_resizable(false)
             .with_maximized(false)
+            .with_inner_size(displays[initial_display_idx].size)
             // .with_inner_size(vec2(500.0, 500.0))
             // .with_max_inner_size(vec2(500.0, 500.0))
             // .with_min_inner_size(vec2(500.0, 500.0))
@@ -105,7 +114,7 @@ fn main() -> eframe::Result {
     let app = MyApp {
         update_thread: None,
         displays,
-        current_display: Arc::new(AtomicUsize::new(0)),
+        current_display: Arc::new(AtomicUsize::new(initial_display_idx)),
         config,
         mode: Arc::new(AtomicMode::new(Mode::Start)),
     };
@@ -217,10 +226,12 @@ impl eframe::App for MyApp {
                 painter.rect(left_rect, Rounding::ZERO, left_color, Stroke::NONE);
 
                 let right_color = Color32::from_rgba_premultiplied(91, 132, 177, 120);
-                let right_rect =
-                    egui::Rect::from_two_pos(origin + vec2(size.x * 0.5, 0.0), origin + vec2(size.x, size.y));
-                    painter.rect(right_rect, Rounding::ZERO, right_color, Stroke::NONE);
-                }
+                let right_rect = egui::Rect::from_two_pos(
+                    origin + vec2(size.x * 0.5, 0.0),
+                    origin + vec2(size.x, size.y),
+                );
+                painter.rect(right_rect, Rounding::ZERO, right_color, Stroke::NONE);
+            }
 
             let color = Color32::from_rgba_premultiplied(28, 92, 48, 120);
             let rect = egui::Rect::from_two_pos(pos2(0.0, 0.0), pos2(50.0, 50.0));
@@ -258,13 +269,12 @@ fn main_logic(
                 display.store(d, Ordering::Relaxed);
 
                 let ref display = displays[d];
-                let mut pos = display.pos + display.offset;
-                let mut size = display.size - display.offset;
+                let pos = display.pos + display.offset;
+                let size = display.size - display.offset;
 
                 ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
                 ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
                 ctx.request_repaint();
-                //                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos2(displays[d].x as f32,displays[d].y as f32)));
             }
         } else {
             one_flag = false;
