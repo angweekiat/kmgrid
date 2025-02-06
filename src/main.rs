@@ -5,9 +5,10 @@ use enigo::{Button, Enigo, Keyboard, Mouse, Settings};
 use eframe::{egui, App};
 
 use eframe::egui::ViewportCommand;
-use egui::{
-    pos2, vec2, Color32, Key, Pos2, Rounding, ScrollArea, Stroke, Vec2,
-};
+use egui::{pos2, vec2, Color32, Key, Pos2, Rounding, ScrollArea, Stroke, Vec2};
+use std::fmt;
+use std::mem::zeroed;
+use std::str::FromStr;
 use std::{
     fs::File,
     io::Read,
@@ -34,18 +35,77 @@ struct Display {
     offset: Vec2,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy)]
+#[derive(serde::Deserialize, Debug, Clone)]
+struct JsonScreenModeBindings {
+    left_region: [String; 3],
+    right_region: [String; 3],
+    prev_screen: String,
+    next_screen: String,
+}
+
+fn to_keycode(s: &str) -> Keycode {
+    let msg = format!("Unable to parse keybinding {}", s);
+    return Keycode::from_str(s).expect(&msg);
+}
+
+impl JsonScreenModeBindings {
+    fn transform(&self) -> ScreenModeBindings {
+        let mut left_region: [Keycode; 3] = [Keycode::Space; 3];
+        let mut right_region: [Keycode; 3] = [Keycode::Space; 3];
+        for (i, val) in self.left_region.iter().enumerate() {
+            left_region[i] = to_keycode(val);
+        }
+        for (i, val) in self.right_region.iter().enumerate() {
+            right_region[i] = to_keycode(val);
+        }
+
+        ScreenModeBindings {
+            regions: [
+                left_region[0], left_region[1], left_region[2],
+                right_region[0], right_region[1], right_region[2]
+            ],
+            prev_screen: to_keycode(&self.prev_screen),
+            next_screen: to_keycode(&self.next_screen),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScreenModeBindings {
+    regions: [Keycode; 6],
+    prev_screen: Keycode,
+    next_screen: Keycode,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+struct JsonConfig {
+    primary_offset_x: i32,
+    primary_offset_y: i32,
+    screen_mode_bindings: JsonScreenModeBindings,
+}
+
+impl JsonConfig {
+    fn transform(&self) -> Config {
+        Config {
+            primary_offset_x: self.primary_offset_x,
+            primary_offset_y: self.primary_offset_y,
+            screen_mode_bindings: self.screen_mode_bindings.transform(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 struct Config {
     primary_offset_x: i32,
     primary_offset_y: i32,
+    screen_mode_bindings: ScreenModeBindings,
 }
 
 #[atomic_enum::atomic_enum]
 #[derive(PartialEq)]
 enum Mode {
-    Start,
-    Left,
-    Right,
+    Screen,
+    Narrow,
 }
 
 fn main() -> eframe::Result {
@@ -55,7 +115,8 @@ fn main() -> eframe::Result {
     res.read_to_string(&mut config)
         .expect("Unable to read config file!");
 
-    let config: Config = serde_json::from_str(&config).expect("Unable to deserialize config!");
+    let config: JsonConfig = serde_json::from_str(&config).expect("Unable to deserialize config!");
+    let config = config.transform();
     println!("Config {config:#?}");
 
     let display_infos = DisplayInfo::all().expect("Unable to get display info!");
@@ -113,10 +174,13 @@ fn main() -> eframe::Result {
 
     let app = MyApp {
         update_thread: None,
-        displays,
-        current_display: Arc::new(AtomicUsize::new(initial_display_idx)),
-        config,
-        mode: Arc::new(AtomicMode::new(Mode::Start)),
+        state: SharedState {
+            displays,
+            current_display: Arc::new(AtomicUsize::new(initial_display_idx)),
+            config,
+            mode: Arc::new(AtomicMode::new(Mode::Screen)),
+            region: Arc::new(AtomicUsize::new(0)),
+        },
     };
 
     eframe::run_native(
@@ -128,10 +192,15 @@ fn main() -> eframe::Result {
 
 struct MyApp {
     update_thread: Option<JoinHandle<()>>,
+    state: SharedState,
+}
+
+struct SharedState {
     displays: Vec<Display>,
     current_display: Arc<AtomicUsize>,
     config: Config,
     mode: Arc<AtomicMode>,
+    region: Arc<AtomicUsize>,
 }
 
 impl eframe::App for MyApp {
@@ -166,8 +235,9 @@ impl eframe::App for MyApp {
             // });
 
             let painter = ui.painter();
-            let display = self.current_display.load(Ordering::Acquire);
-            let ref display = self.displays[display];
+            let region = self.state.region.load(Ordering::Acquire);
+            let display = self.state.current_display.load(Ordering::Acquire);
+            let ref display = self.state.displays[display];
             let origin = Pos2::ZERO - display.offset;
 
             let light_gray = Color32::from_rgba_premultiplied(200, 200, 200, 120);
@@ -175,8 +245,8 @@ impl eframe::App for MyApp {
             let light_gray_stroke = Stroke::new(5.0, light_gray);
             let dark_gray_stroke = Stroke::new(3.0, dark_gray);
 
-            let mode = self.mode.load(Ordering::Acquire);
-            if mode == Mode::Start {
+            let mode = self.state.mode.load(Ordering::Acquire);
+            if mode == Mode::Screen {
                 let feather = 5.0;
                 let edges = vec![
                     (
@@ -202,7 +272,13 @@ impl eframe::App for MyApp {
                     painter.line_segment([edge.0, edge.1], dark_gray_stroke);
                 }
             } else {
-                let origin = origin + vec2(display.size.x * 0.0, display.size.y * 0.0);
+                let mut origin = origin;
+                if region < 3 {
+                    origin += vec2(display.size.x * 0.0, display.size.y * 0.333 * region as f32);
+                } else {
+                    origin += vec2(display.size.x * 0.5, display.size.y * 0.333 * (region-3) as f32);
+                }
+
                 let size = vec2(display.size.x * 0.5, display.size.y * 0.333);
                 for i in 0..11 {
                     let i = i as f32;
@@ -240,56 +316,100 @@ impl eframe::App for MyApp {
     }
 }
 
+fn move_to_display(ctx: &egui::Context, state: &SharedState, display_idx: usize) {
+    let display_idx = display_idx % state.displays.len();
+    state.current_display.store(display_idx, Ordering::Relaxed);
+
+    let ref display = state.displays[display_idx];
+    let pos = display.pos + display.offset;
+    let size = display.size - display.offset;
+
+    ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+    ctx.request_repaint();
+}
+
 fn main_logic(
     ctx: egui::Context,
-    display: Arc<AtomicUsize>,
-    displays: Vec<Display>,
-    config: Config,
-    mode: Arc<AtomicMode>,
+    state: SharedState,
 ) {
     println!("Start of main logic!");
-    let mut one_flag = false;
-    let mut two_flag = false;
 
     let device_state = DeviceState::new();
-    device_state.get_mouse();
+    let mut prev_keys = device_state.get_keys();
     loop {
         let keys: Vec<Keycode> = device_state.get_keys();
-        let now = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH);
+        let is_pressed = |k| -> bool {
+            if k == &Keycode::LShift {
+                let b = ctx.input(|i| i.modifiers.shift);
+          //      println!("LShift {b}");
+                return b;
+            }
+            if k == &Keycode::BackSlash {
+                return ctx.input(|i| i.key_pressed(Key::Backslash));
+            }
+            keys.contains(k) && !prev_keys.contains(k)
+        };
+
+        if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
+            let mut next_display = state.current_display.load(Ordering::Acquire);
+            next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
+            move_to_display(&ctx, &state, next_display);
+
+        } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
+            let next_display = state.current_display.load(Ordering::Acquire) + 1;
+            move_to_display(&ctx, &state, next_display);
+        }
+
+        for (i, key) in state.config.screen_mode_bindings.regions.iter().enumerate() {
+            if is_pressed(key) {
+                println!("Is pressed {key:#?}");
+                state.region.store(i, Ordering::Relaxed);
+                state.mode.store(Mode::Narrow, Ordering::Relaxed);
+                ctx.request_repaint();
+                break;
+            }
+        }
+
+        if is_pressed(&Keycode::Escape) {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+
+        prev_keys = keys;
         // println!("{}", now.unwrap().as_millis());
-        if keys.contains(&Keycode::Enter) {
-            if one_flag == false {
-                println!("Enter is pressed!");
-                // let mut enigo = Enigo::new(&Settings::default()).unwrap();
-                // enigo.button(Button::Left, enigo::Direction::Press).unwrap();
+        // if keys.contains(&Keycode::Enter) {
+        //     if one_flag == false {
+        //         println!("Enter is pressed!");
+        //         // let mut enigo = Enigo::new(&Settings::default()).unwrap();
+        //         // enigo.button(Button::Left, enigo::Direction::Press).unwrap();
 
-                one_flag = true;
-                let mut d = display.load(Ordering::Acquire);
-                d = (d + 1) % displays.len();
-                display.store(d, Ordering::Relaxed);
+        //         one_flag = true;
+        //         let mut d = state.current_display.load(Ordering::Acquire);
+        //         d = (d + 1) % state.displays.len();
+        //         state.current_display.store(d, Ordering::Relaxed);
 
-                let ref display = displays[d];
-                let pos = display.pos + display.offset;
-                let size = display.size - display.offset;
+        //         let ref display = state.displays[d];
+        //         let pos = display.pos + display.offset;
+        //         let size = display.size - display.offset;
 
-                ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-                ctx.request_repaint();
-            }
-        } else {
-            one_flag = false;
-        }
+        //         ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+        //         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+        //         ctx.request_repaint();
+        //     }
+        // } else {
+        //     one_flag = false;
+        // }
 
-        if keys.contains(&Keycode::Tab) {
-            if two_flag == false {
-                println!("Tab is pressed!");
-                mode.store(Mode::Left, Ordering::Relaxed);
-                ctx.request_repaint();
-                two_flag = true;
-            }
-        } else {
-            two_flag = false;
-        }
+        // if keys.contains(&Keycode::Tab) {
+        //     if two_flag == false {
+        //         println!("Tab is pressed!");
+        //         state.mode.store(Mode::Left, Ordering::Relaxed);
+        //         ctx.request_repaint();
+        //         two_flag = true;
+        //     }
+        // } else {
+        //     two_flag = false;
+        // }
         // if keys.contains(&Keycode::W) {
         //     println!("W is pressed!");
         //     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
@@ -324,12 +444,20 @@ fn main_logic(
 
 impl MyApp {
     fn spawn_thread(&mut self, ctx: egui::Context) {
-        let displays = self.displays.clone();
-        let current_display = self.current_display.clone();
-        let config = self.config.clone();
-        let mode = self.mode.clone();
+        let displays = self.state.displays.clone();
+        let current_display = self.state.current_display.clone();
+        let config = self.state.config.clone();
+        let mode = self.state.mode.clone();
+        let region = self.state.region.clone();
+        let state = SharedState {
+            displays,
+            current_display,
+            config,
+            mode,
+            region,
+        };
         let handle =
-            std::thread::spawn(move || main_logic(ctx, current_display, displays, config, mode));
+            std::thread::spawn(move || main_logic(ctx, state));
         self.update_thread = Some(handle);
     }
 }
