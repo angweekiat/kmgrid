@@ -41,6 +41,9 @@ struct JsonScreenModeBindings {
     right_region: [String; 3],
     prev_screen: String,
     next_screen: String,
+
+    left_grid: [String; 15],
+    right_grid: [String; 15],
 }
 
 fn to_keycode(s: &str) -> Key {
@@ -64,6 +67,16 @@ impl JsonScreenModeBindings {
             right_region[i] = to_keycode(val);
         }
 
+        let mut left_grid: [Key; 15] = [Key::Space; 15];
+        for (i, val) in self.left_grid.iter().enumerate() {
+            left_grid[i] = to_keycode(val);
+        }
+
+        let mut right_grid: [Key; 15] = [Key::Space; 15];
+        for (i, val) in self.right_grid.iter().enumerate() {
+            right_grid[i] = to_keycode(val);
+        }
+
         ScreenModeBindings {
             regions: [
                 left_region[0], left_region[1], left_region[2],
@@ -71,6 +84,8 @@ impl JsonScreenModeBindings {
             ],
             prev_screen: to_keycode(&self.prev_screen),
             next_screen: to_keycode(&self.next_screen),
+            left_grid,
+            right_grid,
         }
     }
 }
@@ -80,6 +95,9 @@ struct ScreenModeBindings {
     regions: [Key; 6],
     prev_screen: Key,
     next_screen: Key,
+
+    left_grid: [Key; 15],
+    right_grid: [Key; 15],
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -242,17 +260,69 @@ impl MyApp {
             }
         }
 
-        if is_pressed(&Key::A) {
-            println!("Is pressed a")
+        for (i, key) in state.config.screen_mode_bindings.left_grid.iter().enumerate() {
+            if is_pressed(key) {
+                println!("Left grid pressed {key:#?}");
+
+                let display = state.displays[state.current_display.load(Ordering::Acquire)];
+                let region = state.region.load(Ordering::Acquire);
+
+                let mut pos = display.pos;
+                if region >= 3 {
+                    pos.x += display.size.x * 0.5;
+                }
+                pos.y += display.size.y * 0.333 * (region % 3) as f32;
+                let col = i % 5;
+                let row = i / 5;
+
+                let region_y = display.size.y * 0.333;
+                let cell_y = region_y / 3.0;
+                print!("region y {region_y} cell_y {cell_y}");
+
+                let cell_size = vec2( display.size.x * 0.1 * 0.5, cell_y);
+                let half_cell_size = cell_size * 0.5;
+
+                pos.x += col as f32 * cell_size.x;
+                pos.y += row as f32 * cell_size.y;
+
+                pos += half_cell_size;
+
+                let mut enigo = Enigo::new(&Settings::default()).unwrap();
+                enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
+            }
         }
-        if is_pressed(&Key::S) {
-            println!("Is pressed S")
-        }
-        if is_pressed(&Key::D) {
-            println!("Is pressed d")
-        }
-        if is_pressed(&Key::F) {
-            println!("Is pressed f")
+
+        for (i, key) in state.config.screen_mode_bindings.right_grid.iter().enumerate() {
+            if is_pressed(key) {
+                println!("Right grid pressed {key:#?}");
+                
+                let display = state.displays[state.current_display.load(Ordering::Acquire)];
+                let region = state.region.load(Ordering::Acquire);
+
+                let mut pos = display.pos;
+                if region >= 3 {
+                    pos.x += display.size.x * 0.5;
+                }
+                pos.x += display.size.x * 0.25;
+                pos.y += display.size.y * 0.333 * (region % 3) as f32;
+                let col = i % 5;
+                let row = i / 5;
+
+                let region_y = display.size.y * 0.333;
+                let cell_y = region_y / 3.0;
+                print!("region y {region_y} cell_y {cell_y}");
+
+                let cell_size = vec2( display.size.x * 0.1 * 0.5, cell_y);
+                let half_cell_size = cell_size * 0.5;
+
+                pos.x += col as f32 * cell_size.x;
+                pos.y += row as f32 * cell_size.y;
+
+                pos += half_cell_size;
+
+                let mut enigo = Enigo::new(&Settings::default()).unwrap();
+                enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
+            }
         }
 
         if is_pressed(&Key::Escape) {
