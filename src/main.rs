@@ -43,15 +43,20 @@ struct JsonScreenModeBindings {
     next_screen: String,
 }
 
-fn to_keycode(s: &str) -> Keycode {
+fn to_keycode(s: &str) -> Key {
     let msg = format!("Unable to parse keybinding {}", s);
-    return Keycode::from_str(s).expect(&msg);
+    if s == "LShift" {
+        return Key::F20;
+    } else if s == "LControl" {
+        return Key::F21;
+    }
+    return Key::from_name(s).expect(&msg);
 }
 
 impl JsonScreenModeBindings {
     fn transform(&self) -> ScreenModeBindings {
-        let mut left_region: [Keycode; 3] = [Keycode::Space; 3];
-        let mut right_region: [Keycode; 3] = [Keycode::Space; 3];
+        let mut left_region: [Key; 3] = [Key::Space; 3];
+        let mut right_region: [Key; 3] = [Key::Space; 3];
         for (i, val) in self.left_region.iter().enumerate() {
             left_region[i] = to_keycode(val);
         }
@@ -72,9 +77,9 @@ impl JsonScreenModeBindings {
 
 #[derive(Debug, Clone, Copy)]
 struct ScreenModeBindings {
-    regions: [Keycode; 6],
-    prev_screen: Keycode,
-    next_screen: Keycode,
+    regions: [Key; 6],
+    prev_screen: Key,
+    next_screen: Key,
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
@@ -203,10 +208,64 @@ struct SharedState {
     region: Arc<AtomicUsize>,
 }
 
+impl MyApp {
+    fn handle_input(&mut self, ctx: &egui::Context) {
+
+        let state = &self.state;
+        let input = ctx.input(|i| i.clone());
+        let is_pressed = |&k| -> bool {
+            if k == Key::F20 {
+                return input.modifiers.shift;
+            } else if k == Key::F21 {
+                return input.modifiers.ctrl;
+            }
+            input.key_pressed(k)
+        };
+
+        if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
+            let mut next_display = state.current_display.load(Ordering::Acquire);
+            next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
+            move_to_display(&ctx, &state, next_display);
+
+        } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
+            let next_display = state.current_display.load(Ordering::Acquire) + 1;
+            move_to_display(&ctx, &state, next_display);
+        }
+
+        for (i, key) in state.config.screen_mode_bindings.regions.iter().enumerate() {
+            if is_pressed(key) {
+                println!("Is pressed {key:#?}");
+                state.region.store(i, Ordering::Relaxed);
+                state.mode.store(Mode::Narrow, Ordering::Relaxed);
+                ctx.request_repaint();
+                break;
+            }
+        }
+
+        if is_pressed(&Key::A) {
+            println!("Is pressed a")
+        }
+        if is_pressed(&Key::S) {
+            println!("Is pressed S")
+        }
+        if is_pressed(&Key::D) {
+            println!("Is pressed d")
+        }
+        if is_pressed(&Key::F) {
+            println!("Is pressed f")
+        }
+
+        if is_pressed(&Key::Escape) {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+    }
+}
+
 impl eframe::App for MyApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::TRANSPARENT.to_array() // Make sure we don't paint anything behind the rounded corners
     }
+
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
@@ -214,11 +273,13 @@ impl eframe::App for MyApp {
         ));
         //  ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
 
-        // ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+//        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
 
         if self.update_thread.is_none() {
             self.spawn_thread(ctx.clone());
         }
+
+        self.handle_input(ctx);
 
         // let current_display = self.current_display.load(Ordering::Acquire);
         // let ref display = self.displays[current_display];
@@ -312,6 +373,8 @@ impl eframe::App for MyApp {
             let color = Color32::from_rgba_premultiplied(28, 92, 48, 120);
             let rect = egui::Rect::from_two_pos(pos2(0.0, 0.0), pos2(50.0, 50.0));
             painter.rect(rect, Rounding::ZERO, color, Stroke::new(0.0, color));
+
+            ctx.request_repaint();
         });
     }
 }
@@ -338,44 +401,57 @@ fn main_logic(
     let device_state = DeviceState::new();
     let mut prev_keys = device_state.get_keys();
     loop {
-        let keys: Vec<Keycode> = device_state.get_keys();
-        let is_pressed = |k| -> bool {
-            if k == &Keycode::LShift {
-                let b = ctx.input(|i| i.modifiers.shift);
-          //      println!("LShift {b}");
-                return b;
-            }
-            if k == &Keycode::BackSlash {
-                return ctx.input(|i| i.key_pressed(Key::Backslash));
-            }
-            keys.contains(k) && !prev_keys.contains(k)
-        };
+        // let keys: Vec<Keycode> = device_state.get_keys();
+        // let is_pressed = |k| -> bool {
+        //     //     if k == &Keycode::LShift {
+        //     //         let b = ctx.input(|i| i.modifiers.shift);
+        //     //   //      println!("LShift {b}");
+        //     //         return b;
+        //     //     }
+        //     //     if k == &Keycode::BackSlash {
+        //     //         return ctx.input(|i| i.key_pressed(Key::Backslash));
+        //     //     }
+        //     keys.contains(k) && !prev_keys.contains(k)
+        // };
 
-        if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
-            let mut next_display = state.current_display.load(Ordering::Acquire);
-            next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
-            move_to_display(&ctx, &state, next_display);
+        // if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
+        //     let mut next_display = state.current_display.load(Ordering::Acquire);
+        //     next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
+        //     move_to_display(&ctx, &state, next_display);
 
-        } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
-            let next_display = state.current_display.load(Ordering::Acquire) + 1;
-            move_to_display(&ctx, &state, next_display);
-        }
+        // } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
+        //     let next_display = state.current_display.load(Ordering::Acquire) + 1;
+        //     move_to_display(&ctx, &state, next_display);
+        // }
 
-        for (i, key) in state.config.screen_mode_bindings.regions.iter().enumerate() {
-            if is_pressed(key) {
-                println!("Is pressed {key:#?}");
-                state.region.store(i, Ordering::Relaxed);
-                state.mode.store(Mode::Narrow, Ordering::Relaxed);
-                ctx.request_repaint();
-                break;
-            }
-        }
+        // for (i, key) in state.config.screen_mode_bindings.regions.iter().enumerate() {
+        //     if is_pressed(key) {
+        //         println!("Is pressed {key:#?}");
+        //         state.region.store(i, Ordering::Relaxed);
+        //         state.mode.store(Mode::Narrow, Ordering::Relaxed);
+        //         ctx.request_repaint();
+        //         break;
+        //     }
+        // }
 
-        if is_pressed(&Keycode::Escape) {
-            ctx.send_viewport_cmd(ViewportCommand::Close);
-        }
+        // if is_pressed(&Keycode::A) {
+        //     println!("Is pressed a")
+        // }
+        // if is_pressed(&Keycode::S) {
+        //     println!("Is pressed S")
+        // }
+        // if is_pressed(&Keycode::D) {
+        //     println!("Is pressed d")
+        // }
+        // if is_pressed(&Keycode::F) {
+        //     println!("Is pressed f")
+        // }
 
-        prev_keys = keys;
+        // if is_pressed(&Keycode::Escape) {
+        //     ctx.send_viewport_cmd(ViewportCommand::Close);
+        // }
+
+        // prev_keys = keys;
         // println!("{}", now.unwrap().as_millis());
         // if keys.contains(&Keycode::Enter) {
         //     if one_flag == false {
