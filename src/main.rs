@@ -100,11 +100,23 @@ struct ScreenModeBindings {
     right_grid: [Key; 15],
 }
 
+#[derive(serde::Deserialize, Debug, Clone, Copy)]
+struct Color(u8, u8, u8, u8);
+
+#[derive(serde::Deserialize, Debug, Clone, Copy)]
+struct StyleConfig {
+    region_line1: Color,
+    region_line2: Color,
+    left_grid: Color,
+    right_grid: Color,
+}
+
 #[derive(serde::Deserialize, Debug, Clone)]
 struct JsonConfig {
     primary_offset_x: i32,
     primary_offset_y: i32,
     screen_mode_bindings: JsonScreenModeBindings,
+    style: StyleConfig,
 }
 
 impl JsonConfig {
@@ -113,6 +125,7 @@ impl JsonConfig {
             primary_offset_x: self.primary_offset_x,
             primary_offset_y: self.primary_offset_y,
             screen_mode_bindings: self.screen_mode_bindings.transform(),
+            style: self.style,
         }
     }
 }
@@ -122,6 +135,7 @@ struct Config {
     primary_offset_x: i32,
     primary_offset_y: i32,
     screen_mode_bindings: ScreenModeBindings,
+    style: StyleConfig,
 }
 
 #[atomic_enum::atomic_enum]
@@ -228,7 +242,6 @@ struct SharedState {
 
 impl MyApp {
     fn handle_input(&mut self, ctx: &egui::Context) {
-
         let state = &self.state;
         let bindings = &state.config.screen_mode_bindings;
         let mode = state.mode.load(Ordering::Acquire);
@@ -243,7 +256,11 @@ impl MyApp {
         };
 
         if mode == Mode::Screen {
-            let region_bindings = bindings.left_region.iter().chain(bindings.right_region.iter()).enumerate();
+            let region_bindings = bindings
+                .left_region
+                .iter()
+                .chain(bindings.right_region.iter())
+                .enumerate();
             for (i, key) in region_bindings {
                 if is_pressed(key) {
                     println!("Is pressed {key:#?}");
@@ -260,16 +277,22 @@ impl MyApp {
 
             if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
                 let mut next_display = state.current_display.load(Ordering::Acquire);
-                next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
+                next_display = if next_display == 0 {
+                    state.displays.len() - 1
+                } else {
+                    next_display - 1
+                };
                 move_to_display(&ctx, &state, next_display);
             } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
                 let next_display = state.current_display.load(Ordering::Acquire) + 1;
                 move_to_display(&ctx, &state, next_display);
             }
-
         } else {
-
-            let grid_bindings = bindings.left_grid.iter().chain(bindings.right_grid.iter()).enumerate();
+            let grid_bindings = bindings
+                .left_grid
+                .iter()
+                .chain(bindings.right_grid.iter())
+                .enumerate();
             for (i, key) in grid_bindings {
                 if is_pressed(key) {
                     let display = state.displays[state.current_display.load(Ordering::Acquire)];
@@ -285,7 +308,7 @@ impl MyApp {
                     let row = (i % 15) / 5;
                     let cell_y = region_size.y / 3.0;
 
-                    let cell_size = vec2( region_size.x * 0.1, cell_y);
+                    let cell_size = vec2(region_size.x * 0.1, cell_y);
                     let half_cell_size = cell_size * 0.5;
 
                     pos.x += col as f32 * cell_size.x;
@@ -295,7 +318,6 @@ impl MyApp {
                     if i >= 15 {
                         pos.x += region_size.x * 0.5;
                     }
-
 
                     let mut enigo = Enigo::new(&Settings::default()).unwrap();
                     enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
@@ -314,14 +336,13 @@ impl eframe::App for MyApp {
         egui::Rgba::TRANSPARENT.to_array() // Make sure we don't paint anything behind the rounded corners
     }
 
-
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
         ));
         //  ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
 
-//        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        //        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
 
         if self.update_thread.is_none() {
             self.spawn_thread(ctx.clone());
@@ -348,17 +369,28 @@ impl eframe::App for MyApp {
             let display = self.state.current_display.load(Ordering::Acquire);
             let ref display = self.state.displays[display];
             let origin = Pos2::ZERO - display.offset;
+            let style = &self.state.config.style;
 
-            let light_gray = Color32::from_rgba_premultiplied(200, 200, 200, 120);
-            let dark_gray = Color32::from_rgba_premultiplied(0, 0, 0, 120);
-            let light_gray_stroke = Stroke::new(5.0, light_gray);
-            let dark_gray_stroke = Stroke::new(3.0, dark_gray);
+            let region_line1_color = Color32::from_rgba_unmultiplied(
+                style.region_line1.0,
+                style.region_line1.1,
+                style.region_line1.2,
+                style.region_line1.3,
+            );
+            let region_line2_color = Color32::from_rgba_unmultiplied(
+                style.region_line1.0,
+                style.region_line1.1,
+                style.region_line1.2,
+                style.region_line1.3,
+            );
+            let region_line1_stroke = Stroke::new(5.0, region_line1_color);
+            let region_line2_stroke = Stroke::new(3.0, region_line2_color);
 
             let mode = self.state.mode.load(Ordering::Acquire);
             if mode == Mode::Screen {
                 let rect = Rect::from_min_size(origin, display.size).shrink(5.0);
-                painter.rect_stroke(rect, Rounding::ZERO, light_gray_stroke);
-                painter.rect_stroke(rect, Rounding::ZERO, dark_gray_stroke);
+                painter.rect_stroke(rect, Rounding::ZERO, region_line1_stroke);
+                painter.rect_stroke(rect, Rounding::ZERO, region_line2_stroke);
                 let edges = vec![
                     (
                         origin + vec2(display.size.x * 0.5, 0.0),
@@ -379,15 +411,18 @@ impl eframe::App for MyApp {
                 ];
 
                 for edge in edges {
-                    painter.line_segment([edge.0, edge.1], light_gray_stroke);
-                    painter.line_segment([edge.0, edge.1], dark_gray_stroke);
+                    painter.line_segment([edge.0, edge.1], region_line1_stroke);
+                    painter.line_segment([edge.0, edge.1], region_line2_stroke);
                 }
             } else {
                 let mut origin = origin;
                 if region < 4 {
                     origin += vec2(display.size.x * 0.0, display.size.y * 0.25 * region as f32);
                 } else {
-                    origin += vec2(display.size.x * 0.5, display.size.y * 0.25 * (region-4) as f32);
+                    origin += vec2(
+                        display.size.x * 0.5,
+                        display.size.y * 0.25 * (region - 4) as f32,
+                    );
                 }
 
                 let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
@@ -395,24 +430,36 @@ impl eframe::App for MyApp {
                     let i = i as f32;
                     let start = origin + vec2(region_size.x * i * 0.1, 0.0);
                     let end = origin + vec2(region_size.x * i * 0.1, region_size.y);
-                    painter.line_segment([start, end], light_gray_stroke);
-                    painter.line_segment([start, end], dark_gray_stroke);
+                    painter.line_segment([start, end], region_line1_stroke);
+                    painter.line_segment([start, end], region_line2_stroke);
                 }
 
                 for i in 0..4 {
                     let i = i as f32;
                     let start = origin + vec2(0.0, region_size.y * i * 0.333);
                     let end = origin + vec2(region_size.x, region_size.y * i * 0.333);
-                    painter.line_segment([start, end], light_gray_stroke);
-                    painter.line_segment([start, end], dark_gray_stroke);
+                    painter.line_segment([start, end], region_line1_stroke);
+                    painter.line_segment([start, end], region_line2_stroke);
                 }
 
-                let left_color = Color32::from_rgba_premultiplied(252, 118, 106, 120);
-                let left_rect =
-                    egui::Rect::from_two_pos(origin, origin + vec2(region_size.x * 0.5, region_size.y));
+                let left_color = Color32::from_rgba_unmultiplied(
+                    style.left_grid.0,
+                    style.left_grid.1,
+                    style.left_grid.2,
+                    style.left_grid.3,
+                );
+                let left_rect = egui::Rect::from_two_pos(
+                    origin,
+                    origin + vec2(region_size.x * 0.5, region_size.y),
+                );
                 painter.rect(left_rect, Rounding::ZERO, left_color, Stroke::NONE);
 
-                let right_color = Color32::from_rgba_premultiplied(91, 132, 177, 120);
+                let right_color = Color32::from_rgba_unmultiplied(
+                    style.right_grid.0,
+                    style.right_grid.1,
+                    style.right_grid.2,
+                    style.right_grid.3,
+                );
                 let right_rect = egui::Rect::from_two_pos(
                     origin + vec2(region_size.x * 0.5, 0.0),
                     origin + vec2(region_size.x, region_size.y),
@@ -442,10 +489,7 @@ fn move_to_display(ctx: &egui::Context, state: &SharedState, display_idx: usize)
     ctx.request_repaint();
 }
 
-fn main_logic(
-    ctx: egui::Context,
-    state: SharedState,
-) {
+fn main_logic(ctx: egui::Context, state: SharedState) {
     println!("Start of main logic!");
 
     let device_state = DeviceState::new();
@@ -582,8 +626,7 @@ impl MyApp {
             mode,
             region,
         };
-        let handle =
-            std::thread::spawn(move || main_logic(ctx, state));
+        let handle = std::thread::spawn(move || main_logic(ctx, state));
         self.update_thread = Some(handle);
     }
 }
