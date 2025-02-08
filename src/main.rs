@@ -138,7 +138,6 @@ struct Config {
     style: StyleConfig,
 }
 
-#[atomic_enum::atomic_enum]
 #[derive(PartialEq)]
 enum Mode {
     Screen,
@@ -210,13 +209,12 @@ fn main() -> eframe::Result {
     println!("{keys:#?}");
 
     let app = MyApp {
-        update_thread: None,
         state: SharedState {
             displays,
-            current_display: Arc::new(AtomicUsize::new(initial_display_idx)),
+            current_display: initial_display_idx,
             config,
-            mode: Arc::new(AtomicMode::new(Mode::Screen)),
-            region: Arc::new(AtomicUsize::new(0)),
+            mode: Mode::Screen,
+            region: 0,
         },
     };
 
@@ -228,23 +226,21 @@ fn main() -> eframe::Result {
 }
 
 struct MyApp {
-    update_thread: Option<JoinHandle<()>>,
     state: SharedState,
 }
 
 struct SharedState {
     displays: Vec<Display>,
-    current_display: Arc<AtomicUsize>,
+    current_display: usize,
     config: Config,
-    mode: Arc<AtomicMode>,
-    region: Arc<AtomicUsize>,
+    mode: Mode,
+    region: i32,
 }
 
 impl MyApp {
     fn handle_input(&mut self, ctx: &egui::Context) {
-        let state = &self.state;
+        let state = &mut self.state;
         let bindings = &state.config.screen_mode_bindings;
-        let mode = state.mode.load(Ordering::Acquire);
         let input = ctx.input(|i: &egui::InputState| i.clone());
         let is_pressed = |&k| -> bool {
             if k == Key::F20 {
@@ -255,7 +251,7 @@ impl MyApp {
             input.key_pressed(k)
         };
 
-        if mode == Mode::Screen {
+        if state.mode == Mode::Screen {
             let region_bindings = bindings
                 .left_region
                 .iter()
@@ -264,8 +260,8 @@ impl MyApp {
             for (i, key) in region_bindings {
                 if is_pressed(key) {
                     println!("Is pressed {key:#?}");
-                    state.region.store(i, Ordering::Relaxed);
-                    state.mode.store(Mode::Narrow, Ordering::Relaxed);
+                    state.region = i as i32;
+                    state.mode = Mode::Narrow;
                     ctx.request_repaint();
                     break;
                 }
@@ -276,16 +272,15 @@ impl MyApp {
             }
 
             if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
-                let mut next_display = state.current_display.load(Ordering::Acquire);
-                next_display = if next_display == 0 {
+                let next_display = if state.current_display == 0 {
                     state.displays.len() - 1
                 } else {
-                    next_display - 1
+                    state.current_display - 1
                 };
-                move_to_display(&ctx, &state, next_display);
+                move_to_display(&ctx, & mut self.state, next_display);
             } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
-                let next_display = state.current_display.load(Ordering::Acquire) + 1;
-                move_to_display(&ctx, &state, next_display);
+                let next_display = state.current_display + 1;
+                move_to_display(&ctx, & mut self.state, next_display);
             }
         } else {
             let grid_bindings = bindings
@@ -295,8 +290,8 @@ impl MyApp {
                 .enumerate();
             for (i, key) in grid_bindings {
                 if is_pressed(key) {
-                    let display = state.displays[state.current_display.load(Ordering::Acquire)];
-                    let region = state.region.load(Ordering::Acquire);
+                    let display = state.displays[state.current_display];
+                    let region = state.region;
                     let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
 
                     let mut pos = display.pos;
@@ -325,7 +320,7 @@ impl MyApp {
             }
 
             if is_pressed(&Key::Backspace) {
-                state.mode.store(Mode::Screen, Ordering::Relaxed);
+                state.mode = Mode::Screen;
             }
         }
     }
@@ -340,14 +335,6 @@ impl eframe::App for MyApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
         ));
-        //  ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
-
-        //        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-
-        if self.update_thread.is_none() {
-            self.spawn_thread(ctx.clone());
-        }
-
         self.handle_input(ctx);
 
         // let current_display = self.current_display.load(Ordering::Acquire);
@@ -365,9 +352,8 @@ impl eframe::App for MyApp {
             // });
 
             let painter = ui.painter();
-            let region = self.state.region.load(Ordering::Acquire);
-            let display = self.state.current_display.load(Ordering::Acquire);
-            let ref display = self.state.displays[display];
+            let region = self.state.region;
+            let ref display = self.state.displays[self.state.current_display];
             let origin = Pos2::ZERO - display.offset;
             let style = &self.state.config.style;
 
@@ -386,8 +372,7 @@ impl eframe::App for MyApp {
             let region_line1_stroke = Stroke::new(5.0, region_line1_color);
             let region_line2_stroke = Stroke::new(3.0, region_line2_color);
 
-            let mode = self.state.mode.load(Ordering::Acquire);
-            if mode == Mode::Screen {
+            if self.state.mode == Mode::Screen {
                 let rect = Rect::from_min_size(origin, display.size).shrink(5.0);
                 painter.rect_stroke(rect, Rounding::ZERO, region_line1_stroke);
                 painter.rect_stroke(rect, Rounding::ZERO, region_line2_stroke);
@@ -476,9 +461,8 @@ impl eframe::App for MyApp {
     }
 }
 
-fn move_to_display(ctx: &egui::Context, state: &SharedState, display_idx: usize) {
-    let display_idx = display_idx % state.displays.len();
-    state.current_display.store(display_idx, Ordering::Relaxed);
+fn move_to_display(ctx: &egui::Context, state: &mut SharedState, display_idx: usize) {
+    state.current_display = display_idx % state.displays.len();
 
     let ref display = state.displays[display_idx];
     let pos = display.pos + display.offset;
@@ -487,148 +471,6 @@ fn move_to_display(ctx: &egui::Context, state: &SharedState, display_idx: usize)
     ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
     ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
     ctx.request_repaint();
-}
-
-fn main_logic(ctx: egui::Context, state: SharedState) {
-    println!("Start of main logic!");
-
-    let device_state = DeviceState::new();
-    let mut prev_keys = device_state.get_keys();
-    loop {
-        // let keys: Vec<Keycode> = device_state.get_keys();
-        // let is_pressed = |k| -> bool {
-        //     //     if k == &Keycode::LShift {
-        //     //         let b = ctx.input(|i| i.modifiers.shift);
-        //     //   //      println!("LShift {b}");
-        //     //         return b;
-        //     //     }
-        //     //     if k == &Keycode::BackSlash {
-        //     //         return ctx.input(|i| i.key_pressed(Key::Backslash));
-        //     //     }
-        //     keys.contains(k) && !prev_keys.contains(k)
-        // };
-
-        // if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
-        //     let mut next_display = state.current_display.load(Ordering::Acquire);
-        //     next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
-        //     move_to_display(&ctx, &state, next_display);
-
-        // } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
-        //     let next_display = state.current_display.load(Ordering::Acquire) + 1;
-        //     move_to_display(&ctx, &state, next_display);
-        // }
-
-        // for (i, key) in state.config.screen_mode_bindings.regions.iter().enumerate() {
-        //     if is_pressed(key) {
-        //         println!("Is pressed {key:#?}");
-        //         state.region.store(i, Ordering::Relaxed);
-        //         state.mode.store(Mode::Narrow, Ordering::Relaxed);
-        //         ctx.request_repaint();
-        //         break;
-        //     }
-        // }
-
-        // if is_pressed(&Keycode::A) {
-        //     println!("Is pressed a")
-        // }
-        // if is_pressed(&Keycode::S) {
-        //     println!("Is pressed S")
-        // }
-        // if is_pressed(&Keycode::D) {
-        //     println!("Is pressed d")
-        // }
-        // if is_pressed(&Keycode::F) {
-        //     println!("Is pressed f")
-        // }
-
-        // if is_pressed(&Keycode::Escape) {
-        //     ctx.send_viewport_cmd(ViewportCommand::Close);
-        // }
-
-        // prev_keys = keys;
-        // println!("{}", now.unwrap().as_millis());
-        // if keys.contains(&Keycode::Enter) {
-        //     if one_flag == false {
-        //         println!("Enter is pressed!");
-        //         // let mut enigo = Enigo::new(&Settings::default()).unwrap();
-        //         // enigo.button(Button::Left, enigo::Direction::Press).unwrap();
-
-        //         one_flag = true;
-        //         let mut d = state.current_display.load(Ordering::Acquire);
-        //         d = (d + 1) % state.displays.len();
-        //         state.current_display.store(d, Ordering::Relaxed);
-
-        //         let ref display = state.displays[d];
-        //         let pos = display.pos + display.offset;
-        //         let size = display.size - display.offset;
-
-        //         ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-        //         ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-        //         ctx.request_repaint();
-        //     }
-        // } else {
-        //     one_flag = false;
-        // }
-
-        // if keys.contains(&Keycode::Tab) {
-        //     if two_flag == false {
-        //         println!("Tab is pressed!");
-        //         state.mode.store(Mode::Left, Ordering::Relaxed);
-        //         ctx.request_repaint();
-        //         two_flag = true;
-        //     }
-        // } else {
-        //     two_flag = false;
-        // }
-        // if keys.contains(&Keycode::W) {
-        //     println!("W is pressed!");
-        //     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-        //         900.0, 240.0,
-        //     )));
-
-        //     let mut enigo = Enigo::new(&Settings::default()).unwrap();
-        //     enigo
-        //         .button(Button::Left, enigo::Direction::Release)
-        //         .unwrap();
-
-        //     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        // }
-        // if keys.contains(&Keycode::E) {
-        //     println!("E is down!");
-        //     if two_flag == false {
-        //         println!("E is pressed!");
-
-        //         let mut enigo = Enigo::new(&Settings::default()).unwrap();
-        //         enigo.button(Button::Left, enigo::Direction::Click).unwrap();
-
-        //         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        //         two_flag = true;
-        //     }
-        // } else {
-        //     two_flag = false;
-        // }
-        //  std::thread::sleep(std::time::Duration::from_millis(1));
-        //            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(300.0,360.0)));
-    }
-}
-
-impl MyApp {
-    fn spawn_thread(&mut self, ctx: egui::Context) {
-        let displays = self.state.displays.clone();
-        let current_display = self.state.current_display.clone();
-        let config = self.state.config.clone();
-        let mode = self.state.mode.clone();
-        let region = self.state.region.clone();
-        let state = SharedState {
-            displays,
-            current_display,
-            config,
-            mode,
-            region,
-        };
-        let handle = std::thread::spawn(move || main_logic(ctx, state));
-        self.update_thread = Some(handle);
-    }
 }
 
 fn custom_window_frame(ctx: &egui::Context, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
