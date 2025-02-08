@@ -37,8 +37,8 @@ struct Display {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 struct JsonScreenModeBindings {
-    left_region: [String; 3],
-    right_region: [String; 3],
+    left_region: [String; 4],
+    right_region: [String; 4],
     prev_screen: String,
     next_screen: String,
 
@@ -58,8 +58,8 @@ fn to_keycode(s: &str) -> Key {
 
 impl JsonScreenModeBindings {
     fn transform(&self) -> ScreenModeBindings {
-        let mut left_region: [Key; 3] = [Key::Space; 3];
-        let mut right_region: [Key; 3] = [Key::Space; 3];
+        let mut left_region = [Key::Space; 4];
+        let mut right_region = [Key::Space; 4];
         for (i, val) in self.left_region.iter().enumerate() {
             left_region[i] = to_keycode(val);
         }
@@ -78,10 +78,8 @@ impl JsonScreenModeBindings {
         }
 
         ScreenModeBindings {
-            regions: [
-                left_region[0], left_region[1], left_region[2],
-                right_region[0], right_region[1], right_region[2]
-            ],
+            left_region,
+            right_region,
             prev_screen: to_keycode(&self.prev_screen),
             next_screen: to_keycode(&self.next_screen),
             left_grid,
@@ -92,9 +90,11 @@ impl JsonScreenModeBindings {
 
 #[derive(Debug, Clone, Copy)]
 struct ScreenModeBindings {
-    regions: [Key; 6],
     prev_screen: Key,
     next_screen: Key,
+
+    left_region: [Key; 4],
+    right_region: [Key; 4],
 
     left_grid: [Key; 15],
     right_grid: [Key; 15],
@@ -230,7 +230,9 @@ impl MyApp {
     fn handle_input(&mut self, ctx: &egui::Context) {
 
         let state = &self.state;
-        let input = ctx.input(|i| i.clone());
+        let bindings = &state.config.screen_mode_bindings;
+        let mode = state.mode.load(Ordering::Acquire);
+        let input = ctx.input(|i: &egui::InputState| i.clone());
         let is_pressed = |&k| -> bool {
             if k == Key::F20 {
                 return input.modifiers.shift;
@@ -240,93 +242,69 @@ impl MyApp {
             input.key_pressed(k)
         };
 
-        if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
-            let mut next_display = state.current_display.load(Ordering::Acquire);
-            next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
-            move_to_display(&ctx, &state, next_display);
-
-        } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
-            let next_display = state.current_display.load(Ordering::Acquire) + 1;
-            move_to_display(&ctx, &state, next_display);
-        }
-
-        for (i, key) in state.config.screen_mode_bindings.regions.iter().enumerate() {
-            if is_pressed(key) {
-                println!("Is pressed {key:#?}");
-                state.region.store(i, Ordering::Relaxed);
-                state.mode.store(Mode::Narrow, Ordering::Relaxed);
-                ctx.request_repaint();
-                break;
-            }
-        }
-
-        for (i, key) in state.config.screen_mode_bindings.left_grid.iter().enumerate() {
-            if is_pressed(key) {
-                println!("Left grid pressed {key:#?}");
-
-                let display = state.displays[state.current_display.load(Ordering::Acquire)];
-                let region = state.region.load(Ordering::Acquire);
-
-                let mut pos = display.pos;
-                if region >= 3 {
-                    pos.x += display.size.x * 0.5;
+        if mode == Mode::Screen {
+            let region_bindings = bindings.left_region.iter().chain(bindings.right_region.iter()).enumerate();
+            for (i, key) in region_bindings {
+                if is_pressed(key) {
+                    println!("Is pressed {key:#?}");
+                    state.region.store(i, Ordering::Relaxed);
+                    state.mode.store(Mode::Narrow, Ordering::Relaxed);
+                    ctx.request_repaint();
+                    break;
                 }
-                pos.y += display.size.y * 0.333 * (region % 3) as f32;
-                let col = i % 5;
-                let row = i / 5;
-
-                let region_y = display.size.y * 0.333;
-                let cell_y = region_y / 3.0;
-                print!("region y {region_y} cell_y {cell_y}");
-
-                let cell_size = vec2( display.size.x * 0.1 * 0.5, cell_y);
-                let half_cell_size = cell_size * 0.5;
-
-                pos.x += col as f32 * cell_size.x;
-                pos.y += row as f32 * cell_size.y;
-
-                pos += half_cell_size;
-
-                let mut enigo = Enigo::new(&Settings::default()).unwrap();
-                enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
             }
-        }
 
-        for (i, key) in state.config.screen_mode_bindings.right_grid.iter().enumerate() {
-            if is_pressed(key) {
-                println!("Right grid pressed {key:#?}");
-                
-                let display = state.displays[state.current_display.load(Ordering::Acquire)];
-                let region = state.region.load(Ordering::Acquire);
+            if is_pressed(&Key::Backspace) {
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
 
-                let mut pos = display.pos;
-                if region >= 3 {
-                    pos.x += display.size.x * 0.5;
+            if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
+                let mut next_display = state.current_display.load(Ordering::Acquire);
+                next_display = if next_display == 0 { state.displays.len() - 1 } else { next_display - 1 };
+                move_to_display(&ctx, &state, next_display);
+            } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
+                let next_display = state.current_display.load(Ordering::Acquire) + 1;
+                move_to_display(&ctx, &state, next_display);
+            }
+
+        } else {
+
+            let grid_bindings = bindings.left_grid.iter().chain(bindings.right_grid.iter()).enumerate();
+            for (i, key) in grid_bindings {
+                if is_pressed(key) {
+                    let display = state.displays[state.current_display.load(Ordering::Acquire)];
+                    let region = state.region.load(Ordering::Acquire);
+                    let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+
+                    let mut pos = display.pos;
+                    if region >= 4 {
+                        pos.x += region_size.x;
+                    }
+                    pos.y += region_size.y * (region % 4) as f32;
+                    let col = i % 5;
+                    let row = (i % 15) / 5;
+                    let cell_y = region_size.y / 3.0;
+
+                    let cell_size = vec2( region_size.x * 0.1, cell_y);
+                    let half_cell_size = cell_size * 0.5;
+
+                    pos.x += col as f32 * cell_size.x;
+                    pos.y += row as f32 * cell_size.y;
+                    pos += half_cell_size;
+
+                    if i >= 15 {
+                        pos.x += region_size.x * 0.5;
+                    }
+
+
+                    let mut enigo = Enigo::new(&Settings::default()).unwrap();
+                    enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
                 }
-                pos.x += display.size.x * 0.25;
-                pos.y += display.size.y * 0.333 * (region % 3) as f32;
-                let col = i % 5;
-                let row = i / 5;
-
-                let region_y = display.size.y * 0.333;
-                let cell_y = region_y / 3.0;
-                print!("region y {region_y} cell_y {cell_y}");
-
-                let cell_size = vec2( display.size.x * 0.1 * 0.5, cell_y);
-                let half_cell_size = cell_size * 0.5;
-
-                pos.x += col as f32 * cell_size.x;
-                pos.y += row as f32 * cell_size.y;
-
-                pos += half_cell_size;
-
-                let mut enigo = Enigo::new(&Settings::default()).unwrap();
-                enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
             }
-        }
 
-        if is_pressed(&Key::Escape) {
-            ctx.send_viewport_cmd(ViewportCommand::Close);
+            if is_pressed(&Key::Backspace) {
+                state.mode.store(Mode::Screen, Ordering::Relaxed);
+            }
         }
     }
 }
@@ -378,23 +356,25 @@ impl eframe::App for MyApp {
 
             let mode = self.state.mode.load(Ordering::Acquire);
             if mode == Mode::Screen {
-                let feather = 5.0;
+                let rect = Rect::from_min_size(origin, display.size).shrink(5.0);
+                painter.rect_stroke(rect, Rounding::ZERO, light_gray_stroke);
+                painter.rect_stroke(rect, Rounding::ZERO, dark_gray_stroke);
                 let edges = vec![
                     (
-                        origin + vec2(feather, feather),
-                        origin + vec2(display.size.x - feather, feather),
+                        origin + vec2(display.size.x * 0.5, 0.0),
+                        origin + vec2(display.size.x * 0.5, display.size.y),
                     ),
                     (
-                        origin + vec2(feather, display.size.y - feather),
-                        origin + vec2(display.size.x - feather, display.size.y - feather),
+                        origin + vec2(0.0, display.size.y * 0.5),
+                        origin + vec2(display.size.x, display.size.y * 0.5),
                     ),
                     (
-                        origin + vec2(feather, feather),
-                        origin + vec2(feather, display.size.y - feather),
+                        origin + vec2(0.0, display.size.y * 0.25),
+                        origin + vec2(display.size.x, display.size.y * 0.25),
                     ),
                     (
-                        origin + vec2(display.size.x - feather, feather),
-                        origin + vec2(display.size.x - feather, display.size.y - feather),
+                        origin + vec2(0.0, display.size.y * 0.75),
+                        origin + vec2(display.size.x, display.size.y * 0.75),
                     ),
                 ];
 
@@ -404,38 +384,38 @@ impl eframe::App for MyApp {
                 }
             } else {
                 let mut origin = origin;
-                if region < 3 {
-                    origin += vec2(display.size.x * 0.0, display.size.y * 0.333 * region as f32);
+                if region < 4 {
+                    origin += vec2(display.size.x * 0.0, display.size.y * 0.25 * region as f32);
                 } else {
-                    origin += vec2(display.size.x * 0.5, display.size.y * 0.333 * (region-3) as f32);
+                    origin += vec2(display.size.x * 0.5, display.size.y * 0.25 * (region-4) as f32);
                 }
 
-                let size = vec2(display.size.x * 0.5, display.size.y * 0.333);
+                let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
                 for i in 0..11 {
                     let i = i as f32;
-                    let start = origin + vec2(size.x * i * 0.1, 0.0);
-                    let end = origin + vec2(size.x * i * 0.1, size.y);
+                    let start = origin + vec2(region_size.x * i * 0.1, 0.0);
+                    let end = origin + vec2(region_size.x * i * 0.1, region_size.y);
                     painter.line_segment([start, end], light_gray_stroke);
                     painter.line_segment([start, end], dark_gray_stroke);
                 }
 
                 for i in 0..4 {
                     let i = i as f32;
-                    let start = origin + vec2(0.0, size.y * i * 0.333);
-                    let end = origin + vec2(size.x, size.y * i * 0.333);
+                    let start = origin + vec2(0.0, region_size.y * i * 0.333);
+                    let end = origin + vec2(region_size.x, region_size.y * i * 0.333);
                     painter.line_segment([start, end], light_gray_stroke);
                     painter.line_segment([start, end], dark_gray_stroke);
                 }
 
                 let left_color = Color32::from_rgba_premultiplied(252, 118, 106, 120);
                 let left_rect =
-                    egui::Rect::from_two_pos(origin, origin + vec2(size.x * 0.5, size.y));
+                    egui::Rect::from_two_pos(origin, origin + vec2(region_size.x * 0.5, region_size.y));
                 painter.rect(left_rect, Rounding::ZERO, left_color, Stroke::NONE);
 
                 let right_color = Color32::from_rgba_premultiplied(91, 132, 177, 120);
                 let right_rect = egui::Rect::from_two_pos(
-                    origin + vec2(size.x * 0.5, 0.0),
-                    origin + vec2(size.x, size.y),
+                    origin + vec2(region_size.x * 0.5, 0.0),
+                    origin + vec2(region_size.x, region_size.y),
                 );
                 painter.rect(right_rect, Rounding::ZERO, right_color, Stroke::NONE);
             }
