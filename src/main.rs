@@ -200,11 +200,20 @@ enum Mode {
 }
 
 fn main() -> eframe::Result {
-    let res = File::open("config.json");
-    let mut res = res.expect("Config file not present!");
     let mut config = String::new();
-    res.read_to_string(&mut config)
-        .expect("Unable to read config file!");
+    let res: Result<File, std::io::Error> = File::open("config.json");
+    if let Ok(file) = res {
+        let mut res = file;
+        res.read_to_string(&mut config)
+            .expect("Unable to read config file!");
+    } else {
+        let args: Vec<String> = std::env::args().collect();
+        assert!(args.len() == 2);
+        let res: Result<File, std::io::Error> = File::open(&args[1]);
+        res.expect("Unable to find config file!")
+            .read_to_string(&mut config)
+            .expect("Unable to read config file!");
+    }
 
     let config: JsonConfig = serde_json::from_str(&config).expect("Unable to deserialize config!");
     let config = config.transform();
@@ -295,178 +304,194 @@ struct SharedState {
 }
 
 impl MyApp {
-    fn handle_input(&mut self, ctx: &egui::Context) {
-        let state = &mut self.state;
-        let bindings = &state.config.screen_mode_bindings;
-        let input = ctx.input(|i: &egui::InputState| i.clone());
-        let is_pressed = |&k| -> bool {
-            if k == Key::F20 {
-                return input.modifiers.shift;
-            } else if k == Key::F21 {
-                return input.modifiers.ctrl;
-            }
-            input.key_pressed(k)
-        };
+    fn handle_screen_input(&mut self, ctx: &egui::Context, input: &egui::InputState) {
+        let bindings = &self.state.config.screen_mode_bindings;
+        let is_pressed = |&k| -> bool { input.key_pressed(k) };
 
-        if state.mode == Mode::Screen {
-            let region_bindings = bindings
-                .left_region
-                .iter()
-                .chain(bindings.right_region.iter())
-                .enumerate();
-            for (i, key) in region_bindings {
-                if is_pressed(key) {
-                    println!("Is pressed {key:#?}");
-                    state.region = i as i32;
-                    state.mode = Mode::Narrow;
-                    state.cell = -1;
-                    ctx.request_repaint();
+        let region_bindings = bindings
+            .left_region
+            .iter()
+            .chain(bindings.right_region.iter())
+            .enumerate();
+        for (i, key) in region_bindings {
+            if is_pressed(key) {
+                println!("Is pressed {key:#?}");
+                self.state.region = i as i32;
+                self.state.mode = Mode::Narrow;
+                self.state.cell = -1;
+                ctx.request_repaint();
+                break;
+            }
+        }
+
+        if is_pressed(&Key::Backspace) {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+
+        if is_pressed(&self.state.config.screen_mode_bindings.prev_screen) {
+            let next_display = if self.state.current_display == 0 {
+                self.state.displays.len() - 1
+            } else {
+                self.state.current_display - 1
+            };
+            move_to_display(&ctx, &mut self.state, next_display);
+        } else if is_pressed(&self.state.config.screen_mode_bindings.next_screen) {
+            let next_display = self.state.current_display + 1;
+            move_to_display(&ctx, &mut self.state, next_display);
+        }
+    }
+
+    fn handle_grid_input(&mut self, ctx: &egui::Context, input: &egui::InputState) {
+        let bindings = &self.state.config.screen_mode_bindings;
+        let is_pressed = |&k| -> bool { input.key_pressed(k) };
+
+        let grid_bindings = bindings
+            .left_grid
+            .iter()
+            .chain(bindings.right_grid.iter())
+            .enumerate();
+
+        for (i, key) in grid_bindings {
+            if is_pressed(key) {
+                if self.state.cell == i as i32 {
+                    self.state.mode = Mode::Cell;
+                    break;
+                } else {
+                    self.state.cell = i as i32;
+
+                    let display = self.state.displays[self.state.current_display];
+                    let region = self.state.region;
+                    let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+
+                    let mut pos = display.pos;
+                    if region >= 4 {
+                        pos.x += region_size.x;
+                    }
+                    pos.y += region_size.y * (region % 4) as f32;
+                    let col = i % 5;
+                    let row = (i % 15) / 5;
+
+                    let cell_size = vec2(region_size.x * 0.1, region_size.y / 3.0);
+                    let half_cell_size = cell_size * 0.5;
+
+                    pos.x += col as f32 * cell_size.x;
+                    pos.y += row as f32 * cell_size.y;
+                    pos += half_cell_size;
+
+                    if i >= 15 {
+                        pos.x += region_size.x * 0.5;
+                    }
+
+                    let mut enigo = Enigo::new(&Settings::default()).unwrap();
+                    enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
+                    self.state.mode = Mode::Cell;
                     break;
                 }
             }
+        }
 
-            if is_pressed(&Key::Backspace) {
-                ctx.send_viewport_cmd(ViewportCommand::Close);
-            }
+        if is_pressed(&Key::Backspace) {
+            self.state.mode = Mode::Screen;
+        }
+        if is_pressed(&Key::Enter) && self.state.cell >= 0 {
+            self.state.mode = Mode::Cell;
+        }
+    }
 
-            if is_pressed(&state.config.screen_mode_bindings.prev_screen) {
-                let next_display = if state.current_display == 0 {
-                    state.displays.len() - 1
-                } else {
-                    state.current_display - 1
-                };
-                move_to_display(&ctx, &mut self.state, next_display);
-            } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
-                let next_display = state.current_display + 1;
-                move_to_display(&ctx, &mut self.state, next_display);
-            }
-        } else if state.mode == Mode::Narrow {
-            let grid_bindings = bindings
-                .left_grid
-                .iter()
-                .chain(bindings.right_grid.iter())
-                .enumerate();
+    fn handle_cell_input(&mut self, ctx: &egui::Context, input: &egui::InputState) {
+        let bindings = &self.state.config.screen_mode_bindings;
+        let is_pressed = |&k| -> bool { input.key_pressed(k) };
 
-            for (i, key) in grid_bindings {
-                if is_pressed(key) {
-                    if state.cell == i as i32 {
-                        state.mode = Mode::Cell;
-                        break;
-                    } else {
-                        state.cell = i as i32;
+        let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
-                        let display = state.displays[state.current_display];
-                        let region = state.region;
-                        let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+        let mouse_bindings = &bindings.mouse;
+        if is_pressed(&mouse_bindings.left_click_and_exit) {
+            println!("Click");
 
-                        let mut pos = display.pos;
-                        if region >= 4 {
-                            pos.x += region_size.x;
-                        }
-                        pos.y += region_size.y * (region % 4) as f32;
-                        let col = i % 5;
-                        let row = (i % 15) / 5;
+            enigo
+                .button(Button::Left, enigo::Direction::Click)
+                .expect("Unable to perform mouse click!");
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+        if is_pressed(&mouse_bindings.left_click) {
+            println!("Click");
 
-                        let cell_size = vec2(region_size.x * 0.1, region_size.y / 3.0);
-                        let half_cell_size = cell_size * 0.5;
+            enigo
+                .button(Button::Left, enigo::Direction::Click)
+                .expect("Unable to perform mouse click!");
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
+        } else if is_pressed(&mouse_bindings.right_click) {
+            println!("Right Click");
 
-                        pos.x += col as f32 * cell_size.x;
-                        pos.y += row as f32 * cell_size.y;
-                        pos += half_cell_size;
+            enigo
+                .button(Button::Right, enigo::Direction::Click)
+                .expect("Unable to perform mouse click!");
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        } else if is_pressed(&mouse_bindings.middle_click) {
+            println!("Middle Click");
 
-                        if i >= 15 {
-                            pos.x += region_size.x * 0.5;
-                        }
+            enigo
+                .button(Button::Middle, enigo::Direction::Click)
+                .expect("Unable to perform mouse click!");
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        } else if is_pressed(&mouse_bindings.scroll_up) {
+            println!("Scroll up");
+            enigo
+                .scroll(-self.state.config.scroll_speed, enigo::Axis::Vertical)
+                .expect("Unable to scroll up");
+        } else if is_pressed(&mouse_bindings.scroll_down) {
+            println!("Scroll down");
+            enigo
+                .scroll(self.state.config.scroll_speed, enigo::Axis::Vertical)
+                .expect("Unable to scroll down");
+        } else if is_pressed(&mouse_bindings.down) {
+            println!("Press down");
+            enigo
+                .button(Button::Left, enigo::Direction::Press)
+                .expect("Unable to press");
+        } else if is_pressed(&mouse_bindings.up) {
+            println!("Press release");
 
-                        let mut enigo = Enigo::new(&Settings::default()).unwrap();
-                        enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
-                        state.mode = Mode::Cell;
-                        break;
-                    }
-                }
-            }
+            enigo
+                .button(Button::Left, enigo::Direction::Release)
+                .expect("Unable to release");
+        }
+        if is_pressed(&mouse_bindings.exit) {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
 
-            if is_pressed(&Key::Backspace) {
-                state.mode = Mode::Screen;
-            }
-            if is_pressed(&Key::Enter) && state.cell >= 0 {
-                state.mode = Mode::Cell;
-            }
-        } else if state.mode == Mode::Cell {
-            let mut enigo = Enigo::new(&Settings::default()).unwrap();
+        if is_pressed(&mouse_bindings.move_down) {
+            enigo.move_mouse(0, self.state.config.movement_speed, enigo::Coordinate::Rel);
+        }
+        if is_pressed(&mouse_bindings.move_up) {
+            enigo.move_mouse(0, -self.state.config.movement_speed, enigo::Coordinate::Rel);
+        }
+        if is_pressed(&mouse_bindings.move_left) {
+            enigo.move_mouse(-self.state.config.movement_speed, 0, enigo::Coordinate::Rel);
+        }
+        if is_pressed(&mouse_bindings.move_right) {
+            enigo.move_mouse(self.state.config.movement_speed, 0, enigo::Coordinate::Rel);
+        }
 
-            let mouse_bindings = &bindings.mouse;
-            if is_pressed(&mouse_bindings.left_click_and_exit) {
-                println!("Click");
+        if is_pressed(&Key::Backspace) {
+            self.state.mode = Mode::Narrow;
+        }
+    }
 
-                enigo
-                    .button(Button::Left, enigo::Direction::Click)
-                    .expect("Unable to perform mouse click!");
-                ctx.send_viewport_cmd(ViewportCommand::Close);
-            }
-            if is_pressed(&mouse_bindings.left_click) {
-                println!("Click");
+    fn handle_input(&mut self, ctx: &egui::Context) {
+        let input = ctx.input(|i: &egui::InputState| i.clone());
+        let is_pressed = |&k| -> bool { input.key_pressed(k) };
 
-                enigo
-                    .button(Button::Left, enigo::Direction::Click)
-                    .expect("Unable to perform mouse click!");
-                ctx.send_viewport_cmd(ViewportCommand::Focus);
-            } else if is_pressed(&mouse_bindings.right_click) {
-                println!("Right Click");
+        if self.state.mode == Mode::Screen {
+            self.handle_screen_input(ctx, &input);
+        } else if self.state.mode == Mode::Narrow {
+            self.handle_grid_input(ctx, &input);
+        } else if self.state.mode == Mode::Cell {
+            self.handle_cell_input(ctx, &input);
+        }
 
-                enigo
-                    .button(Button::Right, enigo::Direction::Click)
-                    .expect("Unable to perform mouse click!");
-                ctx.send_viewport_cmd(ViewportCommand::Close);
-            } else if is_pressed(&mouse_bindings.middle_click) {
-                println!("Middle Click");
-
-                enigo
-                    .button(Button::Middle, enigo::Direction::Click)
-                    .expect("Unable to perform mouse click!");
-                ctx.send_viewport_cmd(ViewportCommand::Close);
-            } else if is_pressed(&mouse_bindings.scroll_up) {
-                println!("Scroll up");
-                enigo
-                    .scroll(-state.config.scroll_speed, enigo::Axis::Vertical)
-                    .expect("Unable to scroll up");
-            } else if is_pressed(&mouse_bindings.scroll_down) {
-                println!("Scroll down");
-                enigo
-                    .scroll(state.config.scroll_speed, enigo::Axis::Vertical)
-                    .expect("Unable to scroll down");
-            } else if is_pressed(&mouse_bindings.down) {
-                println!("Press down");
-                enigo
-                    .button(Button::Left, enigo::Direction::Press)
-                    .expect("Unable to press");
-            } else if is_pressed(&mouse_bindings.up) {
-                println!("Press release");
-
-                enigo
-                    .button(Button::Left, enigo::Direction::Release)
-                    .expect("Unable to release");
-            }
-            if is_pressed(&mouse_bindings.exit) {
-                ctx.send_viewport_cmd(ViewportCommand::Close);
-            }
-
-            if is_pressed(&mouse_bindings.move_down) {
-                enigo.move_mouse(0, state.config.movement_speed, enigo::Coordinate::Rel);
-            }
-            if is_pressed(&mouse_bindings.move_up) {
-                enigo.move_mouse(0, -state.config.movement_speed, enigo::Coordinate::Rel);
-            }
-            if is_pressed(&mouse_bindings.move_left) {
-                enigo.move_mouse(-state.config.movement_speed, 0, enigo::Coordinate::Rel);
-            }
-            if is_pressed(&mouse_bindings.move_right) {
-                enigo.move_mouse(state.config.movement_speed, 0, enigo::Coordinate::Rel);
-            }
-
-            if is_pressed(&Key::Backspace) {
-                state.mode = Mode::Narrow;
-            }
+        if is_pressed(&Key::Escape) {
+            ctx.send_viewport_cmd(ViewportCommand::Close);
         }
     }
 }
