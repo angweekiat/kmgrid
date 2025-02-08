@@ -44,6 +44,9 @@ struct JsonScreenModeBindings {
 
     left_grid: [String; 15],
     right_grid: [String; 15],
+
+    cell_mouse_input: [String; 9],
+    cell_mouse_movement: [String; 4],
 }
 
 fn to_keycode(s: &str) -> Key {
@@ -67,14 +70,23 @@ impl JsonScreenModeBindings {
             right_region[i] = to_keycode(val);
         }
 
-        let mut left_grid: [Key; 15] = [Key::Space; 15];
+        let mut left_grid = [Key::Space; 15];
         for (i, val) in self.left_grid.iter().enumerate() {
             left_grid[i] = to_keycode(val);
         }
 
-        let mut right_grid: [Key; 15] = [Key::Space; 15];
+        let mut right_grid = [Key::Space; 15];
         for (i, val) in self.right_grid.iter().enumerate() {
             right_grid[i] = to_keycode(val);
+        }
+
+        let mut cell_mouse_input = [Key::Space; 9];
+        for (i, val) in self.cell_mouse_input.iter().enumerate() {
+            cell_mouse_input[i] = to_keycode(val);
+        }
+        let mut cell_mouse_movement = [Key::Space; 4];
+        for (i, val) in self.cell_mouse_movement.iter().enumerate() {
+            cell_mouse_movement[i] = to_keycode(val);
         }
 
         ScreenModeBindings {
@@ -84,8 +96,42 @@ impl JsonScreenModeBindings {
             next_screen: to_keycode(&self.next_screen),
             left_grid,
             right_grid,
+            mouse: MouseBindings {
+                left_click_and_exit: cell_mouse_input[0],
+                left_click: cell_mouse_input[1],
+                middle_click: cell_mouse_input[2],
+                right_click: cell_mouse_input[3],
+                scroll_up: cell_mouse_input[4],
+                scroll_down: cell_mouse_input[5],
+                down: cell_mouse_input[6],
+                up: cell_mouse_input[7],
+                exit: cell_mouse_input[8],
+
+                move_up: cell_mouse_movement[0],
+                move_down: cell_mouse_movement[1],
+                move_left: cell_mouse_movement[2],
+                move_right: cell_mouse_movement[3],
+            },
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MouseBindings {
+    left_click_and_exit: Key,
+    left_click: Key,
+    middle_click: Key,
+    right_click: Key,
+    scroll_up: Key,
+    scroll_down: Key,
+    down: Key,
+    up: Key,
+    exit: Key,
+
+    move_up: Key,
+    move_down: Key,
+    move_left: Key,
+    move_right: Key,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -98,6 +144,8 @@ struct ScreenModeBindings {
 
     left_grid: [Key; 15],
     right_grid: [Key; 15],
+
+    mouse: MouseBindings,
 }
 
 #[derive(serde::Deserialize, Debug, Clone, Copy)]
@@ -117,6 +165,8 @@ struct JsonConfig {
     primary_offset_y: i32,
     screen_mode_bindings: JsonScreenModeBindings,
     style: StyleConfig,
+    scroll_speed: i32,
+    movement_speed: i32,
 }
 
 impl JsonConfig {
@@ -126,6 +176,8 @@ impl JsonConfig {
             primary_offset_y: self.primary_offset_y,
             screen_mode_bindings: self.screen_mode_bindings.transform(),
             style: self.style,
+            scroll_speed: self.scroll_speed,
+            movement_speed: self.movement_speed,
         }
     }
 }
@@ -136,12 +188,15 @@ struct Config {
     primary_offset_y: i32,
     screen_mode_bindings: ScreenModeBindings,
     style: StyleConfig,
+    scroll_speed: i32,
+    movement_speed: i32,
 }
 
 #[derive(PartialEq)]
 enum Mode {
     Screen,
     Narrow,
+    Cell,
 }
 
 fn main() -> eframe::Result {
@@ -215,6 +270,7 @@ fn main() -> eframe::Result {
             config,
             mode: Mode::Screen,
             region: 0,
+            cell: -1,
         },
     };
 
@@ -235,6 +291,7 @@ struct SharedState {
     config: Config,
     mode: Mode,
     region: i32,
+    cell: i32,
 }
 
 impl MyApp {
@@ -262,6 +319,7 @@ impl MyApp {
                     println!("Is pressed {key:#?}");
                     state.region = i as i32;
                     state.mode = Mode::Narrow;
+                    state.cell = -1;
                     ctx.request_repaint();
                     break;
                 }
@@ -277,50 +335,137 @@ impl MyApp {
                 } else {
                     state.current_display - 1
                 };
-                move_to_display(&ctx, & mut self.state, next_display);
+                move_to_display(&ctx, &mut self.state, next_display);
             } else if is_pressed(&state.config.screen_mode_bindings.next_screen) {
                 let next_display = state.current_display + 1;
-                move_to_display(&ctx, & mut self.state, next_display);
+                move_to_display(&ctx, &mut self.state, next_display);
             }
-        } else {
+        } else if state.mode == Mode::Narrow {
             let grid_bindings = bindings
                 .left_grid
                 .iter()
                 .chain(bindings.right_grid.iter())
                 .enumerate();
+
             for (i, key) in grid_bindings {
                 if is_pressed(key) {
-                    let display = state.displays[state.current_display];
-                    let region = state.region;
-                    let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+                    if state.cell == i as i32 {
+                        state.mode = Mode::Cell;
+                        break;
+                    } else {
+                        state.cell = i as i32;
 
-                    let mut pos = display.pos;
-                    if region >= 4 {
-                        pos.x += region_size.x;
+                        let display = state.displays[state.current_display];
+                        let region = state.region;
+                        let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+
+                        let mut pos = display.pos;
+                        if region >= 4 {
+                            pos.x += region_size.x;
+                        }
+                        pos.y += region_size.y * (region % 4) as f32;
+                        let col = i % 5;
+                        let row = (i % 15) / 5;
+
+                        let cell_size = vec2(region_size.x * 0.1, region_size.y / 3.0);
+                        let half_cell_size = cell_size * 0.5;
+
+                        pos.x += col as f32 * cell_size.x;
+                        pos.y += row as f32 * cell_size.y;
+                        pos += half_cell_size;
+
+                        if i >= 15 {
+                            pos.x += region_size.x * 0.5;
+                        }
+
+                        let mut enigo = Enigo::new(&Settings::default()).unwrap();
+                        enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
+                        state.mode = Mode::Cell;
+                        break;
                     }
-                    pos.y += region_size.y * (region % 4) as f32;
-                    let col = i % 5;
-                    let row = (i % 15) / 5;
-                    let cell_y = region_size.y / 3.0;
-
-                    let cell_size = vec2(region_size.x * 0.1, cell_y);
-                    let half_cell_size = cell_size * 0.5;
-
-                    pos.x += col as f32 * cell_size.x;
-                    pos.y += row as f32 * cell_size.y;
-                    pos += half_cell_size;
-
-                    if i >= 15 {
-                        pos.x += region_size.x * 0.5;
-                    }
-
-                    let mut enigo = Enigo::new(&Settings::default()).unwrap();
-                    enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
                 }
             }
 
             if is_pressed(&Key::Backspace) {
                 state.mode = Mode::Screen;
+            }
+            if is_pressed(&Key::Enter) && state.cell >= 0 {
+                state.mode = Mode::Cell;
+            }
+        } else if state.mode == Mode::Cell {
+            let mut enigo = Enigo::new(&Settings::default()).unwrap();
+
+            let mouse_bindings = &bindings.mouse;
+            if is_pressed(&mouse_bindings.left_click_and_exit) {
+                println!("Click");
+
+                enigo
+                    .button(Button::Left, enigo::Direction::Click)
+                    .expect("Unable to perform mouse click!");
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
+            if is_pressed(&mouse_bindings.left_click) {
+                println!("Click");
+
+                enigo
+                    .button(Button::Left, enigo::Direction::Click)
+                    .expect("Unable to perform mouse click!");
+                ctx.send_viewport_cmd(ViewportCommand::Focus);
+            } else if is_pressed(&mouse_bindings.right_click) {
+                println!("Right Click");
+
+                enigo
+                    .button(Button::Right, enigo::Direction::Click)
+                    .expect("Unable to perform mouse click!");
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            } else if is_pressed(&mouse_bindings.middle_click) {
+                println!("Middle Click");
+
+                enigo
+                    .button(Button::Middle, enigo::Direction::Click)
+                    .expect("Unable to perform mouse click!");
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            } else if is_pressed(&mouse_bindings.scroll_up) {
+                println!("Scroll up");
+                enigo
+                    .scroll(-state.config.scroll_speed, enigo::Axis::Vertical)
+                    .expect("Unable to scroll up");
+            } else if is_pressed(&mouse_bindings.scroll_down) {
+                println!("Scroll down");
+                enigo
+                    .scroll(state.config.scroll_speed, enigo::Axis::Vertical)
+                    .expect("Unable to scroll down");
+            } else if is_pressed(&mouse_bindings.down) {
+                println!("Press down");
+                enigo
+                    .button(Button::Left, enigo::Direction::Press)
+                    .expect("Unable to press");
+            } else if is_pressed(&mouse_bindings.up) {
+                println!("Press release");
+
+                enigo
+                    .button(Button::Left, enigo::Direction::Release)
+                    .expect("Unable to release");
+            }
+            if is_pressed(&mouse_bindings.exit) {
+                ctx.send_viewport_cmd(ViewportCommand::Close);
+            }
+
+            if is_pressed(&mouse_bindings.move_down) {
+                enigo.move_mouse(0, state.config.movement_speed, enigo::Coordinate::Rel);
+            }
+            if is_pressed(&mouse_bindings.move_up) {
+                enigo.move_mouse(0, -state.config.movement_speed, enigo::Coordinate::Rel);
+            }
+            if is_pressed(&mouse_bindings.move_left) {
+                enigo.move_mouse(-state.config.movement_speed, 0, enigo::Coordinate::Rel);
+            }
+            if is_pressed(&mouse_bindings.move_right) {
+                enigo.move_mouse(state.config.movement_speed, 0, enigo::Coordinate::Rel);
+            }
+
+            if is_pressed(&Key::Backspace) {
+                state.mode = Mode::Narrow;
             }
         }
     }
@@ -399,7 +544,7 @@ impl eframe::App for MyApp {
                     painter.line_segment([edge.0, edge.1], region_line1_stroke);
                     painter.line_segment([edge.0, edge.1], region_line2_stroke);
                 }
-            } else {
+            } else if self.state.mode == Mode::Narrow {
                 let mut origin = origin;
                 if region < 4 {
                     origin += vec2(display.size.x * 0.0, display.size.y * 0.25 * region as f32);
@@ -450,12 +595,40 @@ impl eframe::App for MyApp {
                     origin + vec2(region_size.x, region_size.y),
                 );
                 painter.rect(right_rect, Rounding::ZERO, right_color, Stroke::NONE);
+            } else if self.state.mode == Mode::Cell {
+                let mut origin = origin;
+                let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+                let cell_size = vec2(region_size.x * 0.1, region_size.y / 3.0);
+
+                if region < 4 {
+                    origin += vec2(0.0, region_size.y * region as f32);
+                } else {
+                    origin += vec2(region_size.x, region_size.y * (region - 4) as f32);
+                }
+
+                let col = self.state.cell % 5;
+                let row = (self.state.cell % 15) / 5;
+
+                origin.x += col as f32 * cell_size.x;
+                origin.y += row as f32 * cell_size.y;
+
+                let color = if self.state.cell >= 15 {
+                    origin.x += region_size.x * 0.5;
+                    style.right_grid
+                } else {
+                    style.left_grid
+                };
+                let color = Color32::from_rgba_unmultiplied(color.0, color.1, color.2, color.3);
+
+                let rect = egui::Rect::from_min_size(origin, cell_size);
+                painter.rect(rect, Rounding::ZERO, color, Stroke::NONE);
             }
 
             let color = Color32::from_rgba_premultiplied(28, 92, 48, 120);
             let rect = egui::Rect::from_two_pos(pos2(0.0, 0.0), pos2(50.0, 50.0));
             painter.rect(rect, Rounding::ZERO, color, Stroke::new(0.0, color));
 
+            ctx.send_viewport_cmd(ViewportCommand::Focus);
             ctx.request_repaint();
         });
     }
@@ -464,7 +637,7 @@ impl eframe::App for MyApp {
 fn move_to_display(ctx: &egui::Context, state: &mut SharedState, display_idx: usize) {
     state.current_display = display_idx % state.displays.len();
 
-    let ref display = state.displays[display_idx];
+    let ref display = state.displays[state.current_display];
     let pos = display.pos + display.offset;
     let size = display.size - display.offset;
 
