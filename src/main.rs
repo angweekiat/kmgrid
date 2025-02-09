@@ -155,6 +155,8 @@ struct Color(u8, u8, u8, u8);
 struct StyleConfig {
     region_line1: Color,
     region_line2: Color,
+    region_grid_line1: Color,
+    region_grid_line2: Color,
     left_grid: Color,
     right_grid: Color,
 }
@@ -439,12 +441,16 @@ impl MyApp {
             enigo
                 .scroll(-self.state.config.scroll_speed, enigo::Axis::Vertical)
                 .expect("Unable to scroll up");
-        } else if is_pressed(&mouse_bindings.scroll_down) {
+
+                enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+            } else if is_pressed(&mouse_bindings.scroll_down) {
             println!("Scroll down");
             enigo
                 .scroll(self.state.config.scroll_speed, enigo::Axis::Vertical)
                 .expect("Unable to scroll down");
-        } else if is_pressed(&mouse_bindings.down) {
+
+                enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+            } else if is_pressed(&mouse_bindings.down) {
             println!("Press down");
             enigo
                 .button(Button::Left, enigo::Direction::Press)
@@ -496,6 +502,15 @@ impl MyApp {
     }
 }
 
+fn to_stroke(width: f32, col: Color) -> Stroke {
+    let col = Color32::from_rgba_unmultiplied(col.0, col.1, col.2, col.3);
+    Stroke::new(width, col)
+}
+
+fn to_col(col: Color) -> Color32 {
+    Color32::from_rgba_unmultiplied(col.0, col.1, col.2, col.3)
+}
+
 impl eframe::App for MyApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         egui::Rgba::TRANSPARENT.to_array() // Make sure we don't paint anything behind the rounded corners
@@ -527,25 +542,85 @@ impl eframe::App for MyApp {
             let origin = Pos2::ZERO - display.offset;
             let style = &self.state.config.style;
 
-            let region_line1_color = Color32::from_rgba_unmultiplied(
-                style.region_line1.0,
-                style.region_line1.1,
-                style.region_line1.2,
-                style.region_line1.3,
-            );
-            let region_line2_color = Color32::from_rgba_unmultiplied(
-                style.region_line1.0,
-                style.region_line1.1,
-                style.region_line1.2,
-                style.region_line1.3,
-            );
-            let region_line1_stroke = Stroke::new(5.0, region_line1_color);
-            let region_line2_stroke = Stroke::new(3.0, region_line2_color);
+            let region_line1_stroke = to_stroke(5.0, style.region_line1);
+            let region_line2_stroke = to_stroke(3.0, style.region_line2);
+            let left_grid_stroke = to_stroke(5.0, style.left_grid);
+            let right_grid_stroke = to_stroke(5.0, style.right_grid);
+
+            let left_color = to_col(style.left_grid);
+            let right_color = to_col(style.right_grid);
+
+            let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
 
             if self.state.mode == Mode::Screen {
                 let rect = Rect::from_min_size(origin, display.size).shrink(5.0);
                 painter.rect_stroke(rect, Rounding::ZERO, region_line1_stroke);
                 painter.rect_stroke(rect, Rounding::ZERO, region_line2_stroke);
+
+                let region_grid_line1_stroke = to_stroke(1.5, style.region_grid_line1);
+                let region_grid_line2_stroke = to_stroke(1.5, style.region_grid_line2);
+                let horizontal_line_count = 12;
+                for i in 1..horizontal_line_count {
+                    let percentage = (i as f32 / horizontal_line_count as f32);
+                    let left = origin + vec2(0.0, display.size.y * percentage);
+                    let right = origin + vec2(display.size.x, display.size.y * percentage);
+
+                    painter.line_segment([left, right], region_grid_line1_stroke);
+                    painter.line_segment([left, right], region_grid_line2_stroke);
+                }
+
+                let vertical_line_count = 20;
+                for i in 1..vertical_line_count {
+                    let percentage = (i as f32 / vertical_line_count as f32);
+                    let top = origin + vec2(display.size.x * percentage, 0.0);
+                    let btm = origin + vec2(display.size.x * percentage, display.size.y);
+
+                    painter.line_segment([top, btm], region_grid_line1_stroke);
+                    painter.line_segment([top, btm], region_grid_line2_stroke);
+                }
+
+                let mut dark_left_color = self.state.config.style.left_grid.clone();
+                dark_left_color.3 /= 2;
+                let dark_left_color = to_col(dark_left_color);
+
+                let mut dark_right_color = self.state.config.style.right_grid.clone();
+                dark_right_color.3 /= 2;
+                let dark_right_color = to_col(dark_right_color);
+
+                let rects = vec![
+                    (
+                        egui::Rect::from_min_size(
+                            origin,
+                            vec2(region_size.x * 0.5, display.size.y),
+                        ),
+                        dark_left_color,
+                    ),
+                    (
+                        egui::Rect::from_min_size(
+                            origin + vec2(region_size.x, 0.0),
+                            vec2(region_size.x * 0.5, display.size.y),
+                        ),
+                        dark_left_color,
+                    ),
+                    (
+                        egui::Rect::from_min_size(
+                            origin + vec2(region_size.x * 0.5, 0.0),
+                            vec2(region_size.x * 0.5, display.size.y),
+                        ),
+                        dark_right_color,
+                    ),
+                    (
+                        egui::Rect::from_min_size(
+                            origin + vec2(region_size.x * 1.5, 0.0),
+                            vec2(region_size.x * 0.5, display.size.y),
+                        ),
+                        dark_right_color,
+                    ),
+                ];
+                for (rect, color) in rects {
+                    painter.rect(rect, Rounding::ZERO, color, Stroke::NONE);
+                }
+
                 let edges = vec![
                     (
                         origin + vec2(display.size.x * 0.5, 0.0),
@@ -580,7 +655,6 @@ impl eframe::App for MyApp {
                     );
                 }
 
-                let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
                 for i in 0..11 {
                     let i = i as f32;
                     let start = origin + vec2(region_size.x * i * 0.1, 0.0);
