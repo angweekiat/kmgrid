@@ -39,6 +39,7 @@ struct Display {
 struct JsonScreenModeBindings {
     left_region: [String; 4],
     right_region: [String; 4],
+    skip_to_cell: String,
     prev_screen: String,
     next_screen: String,
 
@@ -94,6 +95,7 @@ impl JsonScreenModeBindings {
             right_region,
             prev_screen: to_keycode(&self.prev_screen),
             next_screen: to_keycode(&self.next_screen),
+            skip_to_cell: to_keycode(&self.skip_to_cell),
             left_grid,
             right_grid,
             mouse: MouseBindings {
@@ -141,6 +143,7 @@ struct ScreenModeBindings {
 
     left_region: [Key; 4],
     right_region: [Key; 4],
+    skip_to_cell: Key,
 
     left_grid: [Key; 15],
     right_grid: [Key; 15],
@@ -306,18 +309,17 @@ struct SharedState {
 }
 
 impl MyApp {
-    fn handle_screen_input(&mut self, ctx: &egui::Context, input: &egui::InputState) {
-        let bindings = &self.state.config.screen_mode_bindings;
-        let is_pressed = |&k| -> bool { input.key_pressed(k) };
-
-        let region_bindings = bindings
+    fn handle_screen_input(&mut self, ctx: &egui::Context, is_pressed: Box<dyn Fn(Key) -> bool>) {
+        let region_bindings = self
+            .state
+            .config
+            .screen_mode_bindings
             .left_region
             .iter()
-            .chain(bindings.right_region.iter())
+            .chain(self.state.config.screen_mode_bindings.right_region.iter())
             .enumerate();
         for (i, key) in region_bindings {
-            if is_pressed(key) {
-                println!("Is pressed {key:#?}");
+            if is_pressed(*key) {
                 self.state.region = i as i32;
                 self.state.mode = Mode::Narrow;
                 self.state.cell = -1;
@@ -326,27 +328,27 @@ impl MyApp {
             }
         }
 
-        if is_pressed(&Key::Backspace) {
+        if is_pressed(Key::Backspace) {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
-
-        if is_pressed(&self.state.config.screen_mode_bindings.prev_screen) {
+        if is_pressed(self.state.config.screen_mode_bindings.skip_to_cell) {
+            self.skip_to_cell(ctx);
+        }
+        if is_pressed(self.state.config.screen_mode_bindings.prev_screen) {
             let next_display = if self.state.current_display == 0 {
                 self.state.displays.len() - 1
             } else {
                 self.state.current_display - 1
             };
             move_to_display(&ctx, &mut self.state, next_display);
-        } else if is_pressed(&self.state.config.screen_mode_bindings.next_screen) {
+        } else if is_pressed(self.state.config.screen_mode_bindings.next_screen) {
             let next_display = self.state.current_display + 1;
             move_to_display(&ctx, &mut self.state, next_display);
         }
     }
 
-    fn handle_grid_input(&mut self, ctx: &egui::Context, input: &egui::InputState) {
-        let bindings = &self.state.config.screen_mode_bindings;
-        let is_pressed = |&k| -> bool { input.key_pressed(k) };
-
+    fn handle_grid_input(&mut self, is_pressed: Box<dyn Fn(Key) -> bool>) {
+        let bindings: &ScreenModeBindings = &self.state.config.screen_mode_bindings;
         let grid_bindings = bindings
             .left_grid
             .iter()
@@ -354,7 +356,7 @@ impl MyApp {
             .enumerate();
 
         for (i, key) in grid_bindings {
-            if is_pressed(key) {
+            if is_pressed(*key) {
                 if self.state.cell == i as i32 {
                     self.state.mode = Mode::Cell;
                     break;
@@ -392,112 +394,146 @@ impl MyApp {
             }
         }
 
-        if is_pressed(&Key::Backspace) {
+        if is_pressed(Key::Backspace) {
             self.state.mode = Mode::Screen;
         }
-        if is_pressed(&Key::Enter) && self.state.cell >= 0 {
+        if is_pressed(Key::Enter) && self.state.cell >= 0 {
             self.state.mode = Mode::Cell;
         }
     }
 
-    fn handle_cell_input(&mut self, ctx: &egui::Context, input: &egui::InputState) {
+    fn handle_cell_input(&mut self, ctx: &egui::Context, is_pressed: Box<dyn Fn(Key) -> bool>) {
         let bindings = &self.state.config.screen_mode_bindings;
-        let is_pressed = |&k| -> bool { input.key_pressed(k) };
 
         let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
         let mouse_bindings = &bindings.mouse;
-        if is_pressed(&mouse_bindings.left_click_and_exit) {
-            println!("Click");
+        if is_pressed(mouse_bindings.left_click_and_exit) {
+            println!("Click and bye!");
 
             enigo
                 .button(Button::Left, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
-        if is_pressed(&mouse_bindings.left_click) {
+        if is_pressed(mouse_bindings.left_click) {
             println!("Click");
 
             enigo
                 .button(Button::Left, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Focus);
-        } else if is_pressed(&mouse_bindings.right_click) {
+        } else if is_pressed(mouse_bindings.right_click) {
             println!("Right Click");
 
             enigo
                 .button(Button::Right, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Close);
-        } else if is_pressed(&mouse_bindings.middle_click) {
+        } else if is_pressed(mouse_bindings.middle_click) {
             println!("Middle Click");
 
             enigo
                 .button(Button::Middle, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Close);
-        } else if is_pressed(&mouse_bindings.scroll_up) {
+        } else if is_pressed(mouse_bindings.scroll_up) {
             println!("Scroll up");
             enigo
                 .scroll(-self.state.config.scroll_speed, enigo::Axis::Vertical)
                 .expect("Unable to scroll up");
 
-                enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
-            } else if is_pressed(&mouse_bindings.scroll_down) {
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+        } else if is_pressed(mouse_bindings.scroll_down) {
             println!("Scroll down");
             enigo
                 .scroll(self.state.config.scroll_speed, enigo::Axis::Vertical)
                 .expect("Unable to scroll down");
 
-                enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
-            } else if is_pressed(&mouse_bindings.down) {
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+        } else if is_pressed(mouse_bindings.down) {
             println!("Press down");
             enigo
                 .button(Button::Left, enigo::Direction::Press)
                 .expect("Unable to press");
-        } else if is_pressed(&mouse_bindings.up) {
+        } else if is_pressed(mouse_bindings.up) {
             println!("Press release");
 
             enigo
                 .button(Button::Left, enigo::Direction::Release)
                 .expect("Unable to release");
         }
-        if is_pressed(&mouse_bindings.exit) {
+        if is_pressed(mouse_bindings.exit) {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
 
-        if is_pressed(&mouse_bindings.move_down) {
+        if is_pressed(mouse_bindings.move_down) {
             enigo.move_mouse(0, self.state.config.movement_speed, enigo::Coordinate::Rel);
         }
-        if is_pressed(&mouse_bindings.move_up) {
+        if is_pressed(mouse_bindings.move_up) {
             enigo.move_mouse(0, -self.state.config.movement_speed, enigo::Coordinate::Rel);
         }
-        if is_pressed(&mouse_bindings.move_left) {
+        if is_pressed(mouse_bindings.move_left) {
             enigo.move_mouse(-self.state.config.movement_speed, 0, enigo::Coordinate::Rel);
         }
-        if is_pressed(&mouse_bindings.move_right) {
+        if is_pressed(mouse_bindings.move_right) {
             enigo.move_mouse(self.state.config.movement_speed, 0, enigo::Coordinate::Rel);
         }
 
-        if is_pressed(&Key::Backspace) {
+        if is_pressed(Key::Backspace) {
             self.state.mode = Mode::Narrow;
         }
     }
 
     fn handle_input(&mut self, ctx: &egui::Context) {
         let input = ctx.input(|i: &egui::InputState| i.clone());
-        let is_pressed = |&k| -> bool { input.key_pressed(k) };
+        let is_pressed = move |k| -> bool { input.key_pressed(k) };
+        let is_pressed = Box::new(is_pressed);
 
-        if self.state.mode == Mode::Screen {
-            self.handle_screen_input(ctx, &input);
-        } else if self.state.mode == Mode::Narrow {
-            self.handle_grid_input(ctx, &input);
-        } else if self.state.mode == Mode::Cell {
-            self.handle_cell_input(ctx, &input);
-        }
-
-        if is_pressed(&Key::Escape) {
+        if is_pressed(Key::Escape) {
             ctx.send_viewport_cmd(ViewportCommand::Close);
+        }
+        if self.state.mode == Mode::Screen {
+            self.handle_screen_input(ctx, is_pressed);
+        } else if self.state.mode == Mode::Narrow {
+            self.handle_grid_input(is_pressed);
+        } else if self.state.mode == Mode::Cell {
+            self.handle_cell_input(ctx, is_pressed);
+        }
+    }
+
+    fn skip_to_cell(&mut self, ctx: &egui::Context) {
+        let mouse_pos = DeviceState::new().query_pointer().coords;
+        let mouse_pos = pos2(mouse_pos.0 as f32, mouse_pos.1 as f32);
+
+        for (i, d) in self.state.displays.iter().enumerate() {
+            if egui::Rect::from_min_size(d.pos, d.size).contains(mouse_pos) {
+                let region_size = vec2(d.size.x * 0.5, d.size.y * 0.25);
+                let cell_size = vec2(region_size.x / 10.0, region_size.y / 3.0);
+
+                let rel_display_pos = mouse_pos - d.pos;
+                let mut cell_x = (rel_display_pos.x / cell_size.x) as i32;
+                let mut cell_y = (rel_display_pos.y / cell_size.y) as i32;
+
+                self.state.mode = Mode::Cell;
+                if i != self.state.current_display {
+                    move_to_display(ctx, &mut self.state, i);
+                }
+
+                self.state.region = cell_y / 3;
+                if cell_x >= 10 {
+                    self.state.region += 4;
+                }
+
+                cell_x %= 10;
+                cell_y %= 3;
+                if cell_x >= 5 {
+                    self.state.cell = 15 + cell_y * 5 + (cell_x - 5);
+                } else {
+                    self.state.cell = cell_y * 5 + cell_x;
+                }
+                break;
+            }
         }
     }
 }

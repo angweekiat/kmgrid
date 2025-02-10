@@ -4,6 +4,7 @@
     "screen_mode_bindings": {
         "left_region": ["A", "S", "D", "F"],
         "right_region": ["J", "K", "L", ";"],
+        "skip_to_cell": "H",
         "prev_screen": "Enter",
         "next_screen": "Space",
         "left_grid": ["Q", "W", "E", "R", "T",
