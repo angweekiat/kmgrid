@@ -1,5 +1,5 @@
 use display_info::DisplayInfo;
-use egui::Rect;
+use egui::{Align2, Rect};
 use enigo::{Button, Enigo, Keyboard, Mouse, Settings};
 
 use eframe::{egui, App};
@@ -36,7 +36,33 @@ struct Display {
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
-struct JsonScreenModeBindings {
+struct JsonBindingsForMouse {
+    move_up: String,
+    move_down: String,
+    move_left: String,
+    move_right: String,
+
+    left_click: String,
+    left_click_and_exit: String,
+    middle_click: String,
+    right_click: String,
+
+    left_click_down: String,
+    left_click_up: String,
+
+    scroll_up: String,
+    scroll_down: String,
+    scroll_left: String,
+    scroll_right: String,
+
+    speed_quarter: String,
+    speed_half: String,
+    speed_twice: String,
+    speed_quadruple: String,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+struct JsonKeyBindings {
     left_region: [String; 4],
     right_region: [String; 4],
     skip_to_cell: String,
@@ -46,8 +72,7 @@ struct JsonScreenModeBindings {
     left_grid: [String; 15],
     right_grid: [String; 15],
 
-    cell_mouse_input: [String; 9],
-    cell_mouse_movement: [String; 4],
+    mouse: JsonBindingsForMouse,
 }
 
 fn to_keycode(s: &str) -> Key {
@@ -60,8 +85,8 @@ fn to_keycode(s: &str) -> Key {
     return Key::from_name(s).expect(&msg);
 }
 
-impl JsonScreenModeBindings {
-    fn transform(&self) -> ScreenModeBindings {
+impl JsonKeyBindings {
+    fn transform(&self) -> KeyBindings {
         let mut left_region = [Key::Space; 4];
         let mut right_region = [Key::Space; 4];
         for (i, val) in self.left_region.iter().enumerate() {
@@ -81,16 +106,7 @@ impl JsonScreenModeBindings {
             right_grid[i] = to_keycode(val);
         }
 
-        let mut cell_mouse_input = [Key::Space; 9];
-        for (i, val) in self.cell_mouse_input.iter().enumerate() {
-            cell_mouse_input[i] = to_keycode(val);
-        }
-        let mut cell_mouse_movement = [Key::Space; 4];
-        for (i, val) in self.cell_mouse_movement.iter().enumerate() {
-            cell_mouse_movement[i] = to_keycode(val);
-        }
-
-        ScreenModeBindings {
+        KeyBindings {
             left_region,
             right_region,
             prev_screen: to_keycode(&self.prev_screen),
@@ -99,20 +115,28 @@ impl JsonScreenModeBindings {
             left_grid,
             right_grid,
             mouse: MouseBindings {
-                left_click_and_exit: cell_mouse_input[0],
-                left_click: cell_mouse_input[1],
-                middle_click: cell_mouse_input[2],
-                right_click: cell_mouse_input[3],
-                scroll_up: cell_mouse_input[4],
-                scroll_down: cell_mouse_input[5],
-                down: cell_mouse_input[6],
-                up: cell_mouse_input[7],
-                exit: cell_mouse_input[8],
+                move_up: to_keycode(&self.mouse.move_up),
+                move_down: to_keycode(&self.mouse.move_down),
+                move_left: to_keycode(&self.mouse.move_left),
+                move_right: to_keycode(&self.mouse.move_right),
 
-                move_up: cell_mouse_movement[0],
-                move_down: cell_mouse_movement[1],
-                move_left: cell_mouse_movement[2],
-                move_right: cell_mouse_movement[3],
+                left_click: to_keycode(&self.mouse.left_click),
+                left_click_and_exit: to_keycode(&self.mouse.left_click_and_exit),
+                middle_click: to_keycode(&self.mouse.middle_click),
+                right_click: to_keycode(&self.mouse.right_click),
+
+                left_click_down: to_keycode(&self.mouse.left_click_down),
+                left_click_up: to_keycode(&self.mouse.left_click_up),
+
+                scroll_up: to_keycode(&self.mouse.scroll_up),
+                scroll_down: to_keycode(&self.mouse.scroll_down),
+                scroll_left: to_keycode(&self.mouse.scroll_left),
+                scroll_right: to_keycode(&self.mouse.scroll_right),
+
+                speed_quarter: to_keycode(&self.mouse.speed_quarter),
+                speed_half: to_keycode(&self.mouse.speed_half),
+                speed_twice: to_keycode(&self.mouse.speed_twice),
+                speed_quadruple: to_keycode(&self.mouse.speed_quadruple),
             },
         }
     }
@@ -120,24 +144,32 @@ impl JsonScreenModeBindings {
 
 #[derive(Debug, Clone, Copy)]
 struct MouseBindings {
-    left_click_and_exit: Key,
-    left_click: Key,
-    middle_click: Key,
-    right_click: Key,
-    scroll_up: Key,
-    scroll_down: Key,
-    down: Key,
-    up: Key,
-    exit: Key,
-
     move_up: Key,
     move_down: Key,
     move_left: Key,
     move_right: Key,
+
+    left_click: Key,
+    left_click_and_exit: Key,
+    middle_click: Key,
+    right_click: Key,
+
+    left_click_down: Key,
+    left_click_up: Key,
+
+    scroll_up: Key,
+    scroll_down: Key,
+    scroll_left: Key,
+    scroll_right: Key,
+
+    speed_quarter: Key,
+    speed_half: Key,
+    speed_twice: Key,
+    speed_quadruple: Key,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct ScreenModeBindings {
+struct KeyBindings {
     prev_screen: Key,
     next_screen: Key,
 
@@ -168,7 +200,7 @@ struct StyleConfig {
 struct JsonConfig {
     primary_offset_x: i32,
     primary_offset_y: i32,
-    screen_mode_bindings: JsonScreenModeBindings,
+    key_bindings: JsonKeyBindings,
     style: StyleConfig,
     scroll_speed: i32,
     movement_speed: i32,
@@ -179,7 +211,7 @@ impl JsonConfig {
         Config {
             primary_offset_x: self.primary_offset_x,
             primary_offset_y: self.primary_offset_y,
-            screen_mode_bindings: self.screen_mode_bindings.transform(),
+            key_bindings: self.key_bindings.transform(),
             style: self.style,
             scroll_speed: self.scroll_speed,
             movement_speed: self.movement_speed,
@@ -191,7 +223,7 @@ impl JsonConfig {
 struct Config {
     primary_offset_x: i32,
     primary_offset_y: i32,
-    screen_mode_bindings: ScreenModeBindings,
+    key_bindings: KeyBindings,
     style: StyleConfig,
     scroll_speed: i32,
     movement_speed: i32,
@@ -285,6 +317,7 @@ fn main() -> eframe::Result {
             mode: Mode::Screen,
             region: 0,
             cell: -1,
+            device_state: device_query::DeviceState::new(),
         },
     };
 
@@ -306,17 +339,21 @@ struct SharedState {
     mode: Mode,
     region: i32,
     cell: i32,
+    device_state: DeviceState,
 }
 
 impl MyApp {
-    fn handle_screen_input(&mut self, ctx: &egui::Context, is_pressed: Box<dyn Fn(Key) -> bool>) {
+    fn handle_screen_input<F>(&mut self, ctx: &egui::Context, is_pressed: F)
+    where
+        F: Fn(Key) -> bool,
+    {
         let region_bindings = self
             .state
             .config
-            .screen_mode_bindings
+            .key_bindings
             .left_region
             .iter()
-            .chain(self.state.config.screen_mode_bindings.right_region.iter())
+            .chain(self.state.config.key_bindings.right_region.iter())
             .enumerate();
         for (i, key) in region_bindings {
             if is_pressed(*key) {
@@ -331,24 +368,27 @@ impl MyApp {
         if is_pressed(Key::Backspace) {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
-        if is_pressed(self.state.config.screen_mode_bindings.skip_to_cell) {
+        if is_pressed(self.state.config.key_bindings.skip_to_cell) {
             self.skip_to_cell(ctx);
         }
-        if is_pressed(self.state.config.screen_mode_bindings.prev_screen) {
+        if is_pressed(self.state.config.key_bindings.prev_screen) {
             let next_display = if self.state.current_display == 0 {
                 self.state.displays.len() - 1
             } else {
                 self.state.current_display - 1
             };
             move_to_display(&ctx, &mut self.state, next_display);
-        } else if is_pressed(self.state.config.screen_mode_bindings.next_screen) {
+        } else if is_pressed(self.state.config.key_bindings.next_screen) {
             let next_display = self.state.current_display + 1;
             move_to_display(&ctx, &mut self.state, next_display);
         }
     }
 
-    fn handle_grid_input(&mut self, is_pressed: Box<dyn Fn(Key) -> bool>) {
-        let bindings: &ScreenModeBindings = &self.state.config.screen_mode_bindings;
+    fn handle_grid_input<F>(&mut self, is_pressed: F)
+    where
+        F: Fn(Key) -> bool,
+    {
+        let bindings: &KeyBindings = &self.state.config.key_bindings;
         let grid_bindings = bindings
             .left_grid
             .iter()
@@ -402,13 +442,16 @@ impl MyApp {
         }
     }
 
-    fn handle_cell_input(&mut self, ctx: &egui::Context, is_pressed: Box<dyn Fn(Key) -> bool>) {
-        let bindings = &self.state.config.screen_mode_bindings;
+    fn handle_cell_input<F1, F2>(&mut self, ctx: &egui::Context, is_pressed: F1, is_held: F2)
+    where
+        F1: Fn(Key) -> bool,
+        F2: Fn(Key) -> bool,
+    {
+        let bindings = &self.state.config.key_bindings.mouse;
 
         let mut enigo = Enigo::new(&Settings::default()).unwrap();
 
-        let mouse_bindings = &bindings.mouse;
-        if is_pressed(mouse_bindings.left_click_and_exit) {
+        if is_pressed(bindings.left_click_and_exit) {
             println!("Click and bye!");
 
             enigo
@@ -416,68 +459,97 @@ impl MyApp {
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
-        if is_pressed(mouse_bindings.left_click) {
+        if is_pressed(bindings.left_click) {
             println!("Click");
 
             enigo
                 .button(Button::Left, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Focus);
-        } else if is_pressed(mouse_bindings.right_click) {
+        } else if is_pressed(bindings.right_click) {
             println!("Right Click");
 
             enigo
                 .button(Button::Right, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Close);
-        } else if is_pressed(mouse_bindings.middle_click) {
+        } else if is_pressed(bindings.middle_click) {
             println!("Middle Click");
 
             enigo
                 .button(Button::Middle, enigo::Direction::Click)
                 .expect("Unable to perform mouse click!");
             ctx.send_viewport_cmd(ViewportCommand::Close);
-        } else if is_pressed(mouse_bindings.scroll_up) {
+        }
+
+        if is_held(bindings.scroll_up) {
             println!("Scroll up");
             enigo
                 .scroll(-self.state.config.scroll_speed, enigo::Axis::Vertical)
                 .expect("Unable to scroll up");
 
             enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
-        } else if is_pressed(mouse_bindings.scroll_down) {
+        } else if is_held(bindings.scroll_down) {
             println!("Scroll down");
             enigo
                 .scroll(self.state.config.scroll_speed, enigo::Axis::Vertical)
                 .expect("Unable to scroll down");
 
             enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
-        } else if is_pressed(mouse_bindings.down) {
+        } else if is_held(bindings.scroll_left) {
+            println!("Scroll left");
+            enigo
+                .scroll(-self.state.config.scroll_speed, enigo::Axis::Horizontal)
+                .expect("Unable to scroll up");
+
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+        } else if is_held(bindings.scroll_right) {
+            println!("Scroll right");
+            enigo
+                .scroll(self.state.config.scroll_speed, enigo::Axis::Horizontal)
+                .expect("Unable to scroll down");
+
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+        }
+
+        if is_pressed(bindings.left_click_down) {
             println!("Press down");
             enigo
                 .button(Button::Left, enigo::Direction::Press)
                 .expect("Unable to press");
-        } else if is_pressed(mouse_bindings.up) {
+        } else if is_pressed(bindings.left_click_up) {
             println!("Press release");
 
             enigo
                 .button(Button::Left, enigo::Direction::Release)
                 .expect("Unable to release");
         }
-        if is_pressed(mouse_bindings.exit) {
-            ctx.send_viewport_cmd(ViewportCommand::Close);
+
+        let mut dist = self.state.config.movement_speed;
+        if is_held(bindings.speed_quarter) {
+            dist /= 4;
+        }
+        if is_held(bindings.speed_half) {
+            dist /= 2;
+        }
+        if is_held(bindings.speed_twice) {
+            dist *= 2;
+        }
+        if is_held(bindings.speed_quadruple) {
+            dist *= 4;
         }
 
-        if is_pressed(mouse_bindings.move_down) {
-            enigo.move_mouse(0, self.state.config.movement_speed, enigo::Coordinate::Rel);
+        if is_held(bindings.move_down) {
+            enigo.move_mouse(0, dist, enigo::Coordinate::Rel);
         }
-        if is_pressed(mouse_bindings.move_up) {
-            enigo.move_mouse(0, -self.state.config.movement_speed, enigo::Coordinate::Rel);
+        if is_held(bindings.move_up) {
+            enigo.move_mouse(0, -dist, enigo::Coordinate::Rel);
         }
-        if is_pressed(mouse_bindings.move_left) {
-            enigo.move_mouse(-self.state.config.movement_speed, 0, enigo::Coordinate::Rel);
+        if is_held(bindings.move_left) {
+            enigo.move_mouse(-dist, 0, enigo::Coordinate::Rel);
         }
-        if is_pressed(mouse_bindings.move_right) {
-            enigo.move_mouse(self.state.config.movement_speed, 0, enigo::Coordinate::Rel);
+        if is_held(bindings.move_right) {
+            enigo.move_mouse(dist, 0, enigo::Coordinate::Rel);
         }
 
         if is_pressed(Key::Backspace) {
@@ -487,23 +559,24 @@ impl MyApp {
 
     fn handle_input(&mut self, ctx: &egui::Context) {
         let input = ctx.input(|i: &egui::InputState| i.clone());
-        let is_pressed = move |k| -> bool { input.key_pressed(k) };
-        let is_pressed = Box::new(is_pressed);
+
+        let is_pressed = |k| -> bool { input.key_pressed(k) };
+        let is_held = |k| -> bool { input.key_down(k) };
 
         if is_pressed(Key::Escape) {
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
         if self.state.mode == Mode::Screen {
-            self.handle_screen_input(ctx, is_pressed);
+            self.handle_screen_input(ctx, &is_pressed);
         } else if self.state.mode == Mode::Narrow {
-            self.handle_grid_input(is_pressed);
+            self.handle_grid_input(&is_pressed);
         } else if self.state.mode == Mode::Cell {
-            self.handle_cell_input(ctx, is_pressed);
+            self.handle_cell_input(ctx, &is_pressed, &is_held);
         }
     }
 
     fn skip_to_cell(&mut self, ctx: &egui::Context) {
-        let mouse_pos = DeviceState::new().query_pointer().coords;
+        let mouse_pos = self.state.device_state.query_pointer().coords;
         let mouse_pos = pos2(mouse_pos.0 as f32, mouse_pos.1 as f32);
 
         for (i, d) in self.state.displays.iter().enumerate() {
@@ -659,6 +732,14 @@ impl eframe::App for MyApp {
 
                 let edges = vec![
                     (
+                        origin + vec2(display.size.x * 0.0 + 3.0, 0.0),
+                        origin + vec2(display.size.x * 0.0 + 3.0, display.size.y),
+                    ),
+                    (
+                        origin + vec2(display.size.x - 3.0, 0.0),
+                        origin + vec2(display.size.x - 3.0, display.size.y),
+                    ),
+                    (
                         origin + vec2(display.size.x * 0.5, 0.0),
                         origin + vec2(display.size.x * 0.5, display.size.y),
                     ),
@@ -679,6 +760,50 @@ impl eframe::App for MyApp {
                 for edge in edges {
                     painter.line_segment([edge.0, edge.1], region_line1_stroke);
                     painter.line_segment([edge.0, edge.1], region_line2_stroke);
+                }
+
+                let black_font = egui::FontId::new(30.0, egui::FontFamily::Proportional);
+                let white_font = egui::FontId::new(25.0, egui::FontFamily::Proportional);
+                let opts = vec![
+                    (0.25, 0.5, "A"),
+                    (0.25, 1.5, "S"),
+                    (0.25, 2.5, "D"),
+                    (0.25, 3.5, "F"),
+                    (1.25, 0.5, "J"),
+                    (1.25, 1.5, "K"),
+                    (1.25, 2.5, "L"),
+                    (1.25, 3.5, "Semi"),
+                ];
+                for (x, y, text) in opts {
+                    painter.text(
+                        origin + vec2(region_size.x * x, region_size.y * y),
+                        Align2::CENTER_CENTER,
+                        text,
+                        black_font.clone(),
+                        Color32::BLACK,
+                    );
+                    painter.text(
+                        origin + vec2(region_size.x * x, region_size.y * y),
+                        Align2::CENTER_CENTER,
+                        text,
+                        white_font.clone(),
+                        Color32::WHITE,
+                    );
+
+                    painter.text(
+                        origin + vec2(region_size.x * (x + 0.5), region_size.y * y),
+                        Align2::CENTER_CENTER,
+                        text,
+                        black_font.clone(),
+                        Color32::BLACK,
+                    );
+                    painter.text(
+                        origin + vec2(region_size.x * (x + 0.5), region_size.y * y),
+                        Align2::CENTER_CENTER,
+                        text,
+                        white_font.clone(),
+                        Color32::WHITE,
+                    );
                 }
             } else if self.state.mode == Mode::Narrow {
                 let mut origin = origin;
@@ -730,6 +855,38 @@ impl eframe::App for MyApp {
                     origin + vec2(region_size.x, region_size.y),
                 );
                 painter.rect(right_rect, Rounding::ZERO, right_color, Stroke::NONE);
+
+                let black_font = egui::FontId::new(27.0, egui::FontFamily::Proportional);
+                let white_font = egui::FontId::new(20.0, egui::FontFamily::Proportional);
+                painter.text(
+                    origin + vec2(region_size.x * 0.65, region_size.y * 0.5),
+                    Align2::CENTER_CENTER,
+                    "J",
+                    black_font.clone(),
+                    Color32::BLACK,
+                );
+                painter.text(
+                    origin + vec2(region_size.x * 0.35, region_size.y * 0.5),
+                    Align2::CENTER_CENTER,
+                    "F",
+                    black_font,
+                    Color32::BLACK,
+                );
+
+                painter.text(
+                    origin + vec2(region_size.x * 0.65, region_size.y * 0.5),
+                    Align2::CENTER_CENTER,
+                    "J",
+                    white_font.clone(),
+                    Color32::WHITE,
+                );
+                painter.text(
+                    origin + vec2(region_size.x * 0.35, region_size.y * 0.5),
+                    Align2::CENTER_CENTER,
+                    "F",
+                    white_font,
+                    Color32::WHITE,
+                );
             } else if self.state.mode == Mode::Cell {
                 let mut origin = origin;
                 let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
