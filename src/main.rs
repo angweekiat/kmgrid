@@ -2,7 +2,7 @@ use display_info::DisplayInfo;
 use egui::{Align2, Rect};
 use enigo::{Button, Enigo, Keyboard, Mouse, Settings};
 
-use eframe::{egui, App};
+use eframe::{egui, App, Result};
 
 use eframe::egui::ViewportCommand;
 use egui::{pos2, vec2, Color32, Key, Pos2, Rounding, ScrollArea, Stroke, Vec2};
@@ -77,11 +77,6 @@ struct JsonKeyBindings {
 
 fn to_keycode(s: &str) -> Key {
     let msg = format!("Unable to parse keybinding {}", s);
-    if s == "LShift" {
-        return Key::F20;
-    } else if s == "LControl" {
-        return Key::F21;
-    }
     return Key::from_name(s).expect(&msg);
 }
 
@@ -318,6 +313,7 @@ fn main() -> eframe::Result {
             region: 0,
             cell: -1,
             device_state: device_query::DeviceState::new(),
+            enigo: Enigo::new(&Settings::default()).unwrap(),
         },
     };
 
@@ -340,6 +336,7 @@ struct SharedState {
     region: i32,
     cell: i32,
     device_state: DeviceState,
+    enigo: Enigo,
 }
 
 impl MyApp {
@@ -384,7 +381,7 @@ impl MyApp {
         }
     }
 
-    fn handle_grid_input<F>(&mut self, is_pressed: F)
+    fn handle_grid_input<F>(&mut self, is_pressed: F) -> Result<(), enigo::InputError>
     where
         F: Fn(Key) -> bool,
     {
@@ -426,8 +423,7 @@ impl MyApp {
                         pos.x += region_size.x * 0.5;
                     }
 
-                    let mut enigo = Enigo::new(&Settings::default()).unwrap();
-                    enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs);
+                    self.state.enigo.move_mouse(pos.x as i32, pos.y as i32, enigo::Coordinate::Abs)?;
                     self.state.mode = Mode::Cell;
                     break;
                 }
@@ -440,89 +436,70 @@ impl MyApp {
         if is_pressed(Key::Enter) && self.state.cell >= 0 {
             self.state.mode = Mode::Cell;
         }
+        return Ok(());
     }
 
-    fn handle_cell_input<F1, F2>(&mut self, ctx: &egui::Context, is_pressed: F1, is_held: F2)
+    fn handle_cell_input<F1, F2>(&mut self, ctx: &egui::Context, is_pressed: F1, is_held: F2) -> Result<(), enigo::InputError>
     where
         F1: Fn(Key) -> bool,
         F2: Fn(Key) -> bool,
     {
         let bindings = &self.state.config.key_bindings.mouse;
-
-        let mut enigo = Enigo::new(&Settings::default()).unwrap();
+        let enigo = &mut self.state.enigo;
 
         if is_pressed(bindings.left_click_and_exit) {
             println!("Click and bye!");
 
-            enigo
-                .button(Button::Left, enigo::Direction::Click)
-                .expect("Unable to perform mouse click!");
+            enigo.button(Button::Left, enigo::Direction::Click)?;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
         if is_pressed(bindings.left_click) {
             println!("Click");
 
-            enigo
-                .button(Button::Left, enigo::Direction::Click)
-                .expect("Unable to perform mouse click!");
+            enigo.button(Button::Left, enigo::Direction::Click)?;
             ctx.send_viewport_cmd(ViewportCommand::Focus);
         } else if is_pressed(bindings.right_click) {
             println!("Right Click");
 
-            enigo
-                .button(Button::Right, enigo::Direction::Click)
-                .expect("Unable to perform mouse click!");
+            enigo.button(Button::Right, enigo::Direction::Click)?;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         } else if is_pressed(bindings.middle_click) {
             println!("Middle Click");
 
-            enigo
-                .button(Button::Middle, enigo::Direction::Click)
-                .expect("Unable to perform mouse click!");
+            enigo.button(Button::Middle, enigo::Direction::Click)?;
             ctx.send_viewport_cmd(ViewportCommand::Close);
         }
 
         if is_held(bindings.scroll_up) {
             println!("Scroll up");
-            enigo
-                .scroll(-self.state.config.scroll_speed, enigo::Axis::Vertical)
-                .expect("Unable to scroll up");
+            enigo.scroll(-self.state.config.scroll_speed, enigo::Axis::Vertical)?;
 
-            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel)?;
         } else if is_held(bindings.scroll_down) {
             println!("Scroll down");
-            enigo
-                .scroll(self.state.config.scroll_speed, enigo::Axis::Vertical)
-                .expect("Unable to scroll down");
+            enigo.scroll(self.state.config.scroll_speed, enigo::Axis::Vertical)?;
 
-            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel)?;
         } else if is_held(bindings.scroll_left) {
             println!("Scroll left");
-            enigo
-                .scroll(-self.state.config.scroll_speed, enigo::Axis::Horizontal)
-                .expect("Unable to scroll up");
+            enigo.scroll(-self.state.config.scroll_speed, enigo::Axis::Horizontal)?;
 
-            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel)?;
         } else if is_held(bindings.scroll_right) {
             println!("Scroll right");
-            enigo
-                .scroll(self.state.config.scroll_speed, enigo::Axis::Horizontal)
-                .expect("Unable to scroll down");
+            enigo.scroll(self.state.config.scroll_speed, enigo::Axis::Horizontal)?;
 
-            enigo.move_mouse(0, 0, enigo::Coordinate::Rel);
+            enigo.move_mouse(0, 0, enigo::Coordinate::Rel)?;
         }
 
         if is_pressed(bindings.left_click_down) {
             println!("Press down");
             enigo
-                .button(Button::Left, enigo::Direction::Press)
-                .expect("Unable to press");
+                .button(Button::Left, enigo::Direction::Press)?;
         } else if is_pressed(bindings.left_click_up) {
             println!("Press release");
 
-            enigo
-                .button(Button::Left, enigo::Direction::Release)
-                .expect("Unable to release");
+            enigo.button(Button::Left, enigo::Direction::Release)?;
         }
 
         let mut dist = self.state.config.movement_speed;
@@ -540,24 +517,25 @@ impl MyApp {
         }
 
         if is_held(bindings.move_down) {
-            enigo.move_mouse(0, dist, enigo::Coordinate::Rel);
+            enigo.move_mouse(0, dist, enigo::Coordinate::Rel)?;
         }
         if is_held(bindings.move_up) {
-            enigo.move_mouse(0, -dist, enigo::Coordinate::Rel);
+            enigo.move_mouse(0, -dist, enigo::Coordinate::Rel)?;
         }
         if is_held(bindings.move_left) {
-            enigo.move_mouse(-dist, 0, enigo::Coordinate::Rel);
+            enigo.move_mouse(-dist, 0, enigo::Coordinate::Rel)?;
         }
         if is_held(bindings.move_right) {
-            enigo.move_mouse(dist, 0, enigo::Coordinate::Rel);
+            enigo.move_mouse(dist, 0, enigo::Coordinate::Rel)?;
         }
 
         if is_pressed(Key::Backspace) {
             self.state.mode = Mode::Narrow;
         }
+        return Ok(());
     }
 
-    fn handle_input(&mut self, ctx: &egui::Context) {
+    fn handle_input(&mut self, ctx: &egui::Context) -> Result<(), enigo::InputError> {
         let input = ctx.input(|i: &egui::InputState| i.clone());
 
         let is_pressed = |k| -> bool { input.key_pressed(k) };
@@ -569,10 +547,12 @@ impl MyApp {
         if self.state.mode == Mode::Screen {
             self.handle_screen_input(ctx, &is_pressed);
         } else if self.state.mode == Mode::Narrow {
-            self.handle_grid_input(&is_pressed);
+            self.handle_grid_input(&is_pressed)?;
         } else if self.state.mode == Mode::Cell {
-            self.handle_cell_input(ctx, &is_pressed, &is_held);
+            self.handle_cell_input(ctx, &is_pressed, &is_held)?;
         }
+
+        return Ok(());
     }
 
     fn skip_to_cell(&mut self, ctx: &egui::Context) {
@@ -629,21 +609,11 @@ impl eframe::App for MyApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
         ));
-        self.handle_input(ctx);
+        if let Err(input_err) = self.handle_input(ctx) {
+            println!("Failed to manipluate mouse: {input_err}");
+        }
 
-        // let current_display = self.current_display.load(Ordering::Acquire);
-        // let ref display = self.displays[current_display];
-        // let pos = pos2(display.x as f32, display.y as f32);
-        // let size = vec2(display.width as f32, display.height as f32);
-        // ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-        // ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-
-        custom_window_frame(ctx, "egui with custom frame", |ui| {
-            // ui.label("This is just the contents of the window.");
-            // ui.horizontal(|ui| {
-            //     ui.label("egui theme:");
-            //     egui::widgets::global_theme_preference_buttons(ui);
-            // });
+        custom_window_frame(ctx, |ui| {
 
             let painter = ui.painter();
             let region = self.state.region;
@@ -653,11 +623,6 @@ impl eframe::App for MyApp {
 
             let region_line1_stroke = to_stroke(5.0, style.region_line1);
             let region_line2_stroke = to_stroke(3.0, style.region_line2);
-            let left_grid_stroke = to_stroke(5.0, style.left_grid);
-            let right_grid_stroke = to_stroke(5.0, style.right_grid);
-
-            let left_color = to_col(style.left_grid);
-            let right_color = to_col(style.right_grid);
 
             let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
 
@@ -938,7 +903,7 @@ fn move_to_display(ctx: &egui::Context, state: &mut SharedState, display_idx: us
     ctx.request_repaint();
 }
 
-fn custom_window_frame(ctx: &egui::Context, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
+fn custom_window_frame(ctx: &egui::Context, add_contents: impl FnOnce(&mut egui::Ui)) {
     use egui::{CentralPanel, UiBuilder};
     let panel_frame = egui::Frame::none();
 
