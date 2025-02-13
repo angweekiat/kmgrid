@@ -340,6 +340,19 @@ struct SharedState {
 }
 
 impl MyApp {
+
+    fn move_to_display(&mut self, ctx: &egui::Context, display_idx: usize) {
+        self.state.current_display = display_idx % self.state.displays.len();
+
+        let ref display = self.state.displays[self.state.current_display];
+        let pos = display.pos + display.offset;
+        let size = display.size - display.offset;
+
+        ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
+        ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
+        ctx.request_repaint();
+    }
+
     fn handle_screen_input<F>(&mut self, ctx: &egui::Context, is_pressed: F)
     where
         F: Fn(Key) -> bool,
@@ -374,10 +387,10 @@ impl MyApp {
             } else {
                 self.state.current_display - 1
             };
-            move_to_display(&ctx, &mut self.state, next_display);
+            self.move_to_display(&ctx, next_display);
         } else if is_pressed(self.state.config.key_bindings.next_screen) {
             let next_display = self.state.current_display + 1;
-            move_to_display(&ctx, &mut self.state, next_display);
+            self.move_to_display(&ctx, next_display);
         }
     }
 
@@ -570,7 +583,7 @@ impl MyApp {
 
                 self.state.mode = Mode::Cell;
                 if i != self.state.current_display {
-                    move_to_display(ctx, &mut self.state, i);
+                    self.move_to_display(ctx, i);
                 }
 
                 self.state.region = cell_y / 3;
@@ -613,8 +626,7 @@ impl eframe::App for MyApp {
             println!("Failed to manipluate mouse: {input_err}");
         }
 
-        custom_window_frame(ctx, |ui| {
-
+        egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
             let painter = ui.painter();
             let region = self.state.region;
             let ref display = self.state.displays[self.state.current_display];
@@ -889,27 +901,4 @@ impl eframe::App for MyApp {
             ctx.request_repaint();
         });
     }
-}
-
-fn move_to_display(ctx: &egui::Context, state: &mut SharedState, display_idx: usize) {
-    state.current_display = display_idx % state.displays.len();
-
-    let ref display = state.displays[state.current_display];
-    let pos = display.pos + display.offset;
-    let size = display.size - display.offset;
-
-    ctx.send_viewport_cmd(ViewportCommand::InnerSize(size));
-    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(pos));
-    ctx.request_repaint();
-}
-
-fn custom_window_frame(ctx: &egui::Context, add_contents: impl FnOnce(&mut egui::Ui)) {
-    use egui::{CentralPanel, UiBuilder};
-    let panel_frame = egui::Frame::none();
-
-    CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
-        let app_rect = ui.max_rect();
-        let mut content_ui = ui.new_child(UiBuilder::new().max_rect(app_rect));
-        add_contents(&mut content_ui);
-    });
 }
