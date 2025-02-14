@@ -27,10 +27,10 @@
             "left_click_down": ";",
             "left_click_up": "/",
 
-            "scroll_up": ",",
-            "scroll_down": "M",
-            "scroll_left": "K",
-            "scroll_right": "L",
+            "scroll_up": "K",
+            "scroll_down": "L",
+            "scroll_left": "M",
+            "scroll_right": ",",
 
             "speed_quarter": "Q",
             "speed_half": "W",
