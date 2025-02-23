@@ -2,40 +2,39 @@
     "primary_offset_x": 72,
     "primary_offset_y": 0,
     "key_bindings": {
-        "left_region": ["A", "S", "D", "F"],
-        "right_region": ["J", "K", "L", ";"],
+        "region": ["Q", "W", "E", "R",
+                   "U", "I", "O", "P",
+                   "A", "S", "D", "F",
+                   "J", "K", "L", ";"],
         "skip_to_cell": "H",
         "prev_screen": "Enter",
         "next_screen": "Space",
-        "left_grid": ["Q", "W", "E", "R", "T",
-                          "A", "S", "D", "F", "G",
-                          "Z", "X", "C", "V", "B"],
-        "right_grid": ["Y", "U", "I", "O", "P",
-                           "H", "J", "K", "L", ";",
-                           "N", "M", ",", ".", "/"],
+        "grid": ["Y", "U", "I", "O", "P",
+                "H", "J", "K", "L", ";",
+                "N", "M", ",", ".", "/"],
         "mouse": {
-            "move_up": "O",
-            "move_down": "I",
-            "move_left": "U",
-            "move_right": "P",
+            "move_up": "3",
+            "move_down": "-",
+            "move_left": "+",
+            "move_right": "=",
 
             "left_click": "H",
             "left_click_and_exit": "J",
             "middle_click": "N",
-            "right_click": "Y",
+            "right_click": "M",
 
-            "left_click_down": ";",
-            "left_click_up": "/",
+            "left_click_down": "Y",
+            "left_click_up": "U",
 
-            "scroll_up": "K",
-            "scroll_down": "L",
-            "scroll_left": "M",
-            "scroll_right": ",",
+            "scroll_up": "T",
+            "scroll_down": "G",
+            "scroll_left": "V",
+            "scroll_right": "B",
 
-            "speed_quarter": "Q",
-            "speed_half": "W",
-            "speed_twice": "E",
-            "speed_quadruple": "R"
+            "speed_quarter": "9",
+            "speed_half": "8",
+            "speed_twice": "7",
+            "speed_quadruple": "0"
         }
     },
     "style": {
@@ -43,9 +42,9 @@
         "region_line2": [0, 0, 0, 200],
         "region_grid_line1": [252, 118, 106, 50],
         "region_grid_line2": [91, 132, 177, 50],
-        "left_grid": [252, 118, 106, 50],
-        "right_grid": [91, 132, 177, 50]
+        "left_grid": [172, 38, 26, 20],
+        "right_grid": [11, 52, 97, 20]
     },
     "scroll_speed": 1,
-    "movement_speed": 8
+    "movement_speed": 5
 }

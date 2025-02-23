@@ -46,14 +46,12 @@ struct JsonBindingsForMouse {
 
 #[derive(serde::Deserialize, Debug, Clone)]
 struct JsonKeyBindings {
-    left_region: [String; 4],
-    right_region: [String; 4],
+    region: [String; 16],
     skip_to_cell: String,
     prev_screen: String,
     next_screen: String,
 
-    left_grid: [String; 15],
-    right_grid: [String; 15],
+    grid: [String; 15],
 
     mouse: JsonBindingsForMouse,
 }
@@ -65,33 +63,22 @@ fn to_keycode(s: &str) -> Key {
 
 impl JsonKeyBindings {
     fn transform(&self) -> KeyBindings {
-        let mut left_region = [Key::Space; 4];
-        let mut right_region = [Key::Space; 4];
-        for (i, val) in self.left_region.iter().enumerate() {
-            left_region[i] = to_keycode(val);
-        }
-        for (i, val) in self.right_region.iter().enumerate() {
-            right_region[i] = to_keycode(val);
+        let mut region = [Key::Space; 16];
+        for (i, val) in self.region.iter().enumerate() {
+            region[i] = to_keycode(val);
         }
 
-        let mut left_grid = [Key::Space; 15];
-        for (i, val) in self.left_grid.iter().enumerate() {
-            left_grid[i] = to_keycode(val);
-        }
-
-        let mut right_grid = [Key::Space; 15];
-        for (i, val) in self.right_grid.iter().enumerate() {
-            right_grid[i] = to_keycode(val);
+        let mut grid = [Key::Space; 15];
+        for (i, val) in self.grid.iter().enumerate() {
+            grid[i] = to_keycode(val);
         }
 
         KeyBindings {
-            left_region,
-            right_region,
+            region,
             prev_screen: to_keycode(&self.prev_screen),
             next_screen: to_keycode(&self.next_screen),
             skip_to_cell: to_keycode(&self.skip_to_cell),
-            left_grid,
-            right_grid,
+            grid,
             mouse: MouseBindings {
                 move_up: to_keycode(&self.mouse.move_up),
                 move_down: to_keycode(&self.mouse.move_down),
@@ -151,12 +138,10 @@ struct KeyBindings {
     prev_screen: Key,
     next_screen: Key,
 
-    left_region: [Key; 4],
-    right_region: [Key; 4],
+    region: [Key; 16],
     skip_to_cell: Key,
 
-    left_grid: [Key; 15],
-    right_grid: [Key; 15],
+    grid: [Key; 15],
 
     mouse: MouseBindings,
 }
@@ -341,14 +326,7 @@ impl MyApp {
     where
         F: Fn(Key) -> bool,
     {
-        let region_bindings = self
-            .state
-            .config
-            .key_bindings
-            .left_region
-            .iter()
-            .chain(self.state.config.key_bindings.right_region.iter())
-            .enumerate();
+        let region_bindings = self.state.config.key_bindings.region.iter().enumerate();
         for (i, key) in region_bindings {
             if is_pressed(*key) {
                 self.state.region = i as i32;
@@ -383,11 +361,7 @@ impl MyApp {
         F: Fn(Key) -> bool,
     {
         let bindings: &KeyBindings = &self.state.config.key_bindings;
-        let grid_bindings = bindings
-            .left_grid
-            .iter()
-            .chain(bindings.right_grid.iter())
-            .enumerate();
+        let grid_bindings = bindings.grid.iter().enumerate();
 
         for (i, key) in grid_bindings {
             if is_pressed(*key) {
@@ -395,26 +369,17 @@ impl MyApp {
 
                 let display = self.state.displays[self.state.current_display];
                 let region = self.state.region;
-                let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+                let region_size = vec2(display.size.x * 0.25, display.size.y * 0.25);
+                let cell_size = vec2(region_size.x / 5.0, region_size.y / 3.0);
 
                 let mut pos = display.pos;
-                if region >= 4 {
-                    pos.x += region_size.x;
-                }
-                pos.y += region_size.y * (region % 4) as f32;
-                let col = i % 5;
-                let row = (i % 15) / 5;
-
-                let cell_size = vec2(region_size.x * 0.1, region_size.y / 3.0);
-                let half_cell_size = cell_size * 0.5;
-
-                pos.x += col as f32 * cell_size.x;
-                pos.y += row as f32 * cell_size.y;
-                pos += half_cell_size;
-
-                if i >= 15 {
-                    pos.x += region_size.x * 0.5;
-                }
+                pos += vec2(
+                    region_size.x * (region % 4) as f32,
+                    region_size.y * (region / 4) as f32,
+                ) + vec2(
+                    cell_size.x * ((i % 5) as f32 + 0.5),
+                    cell_size.y * ((i / 5) as f32 + 0.5),
+                );
 
                 self.state
                     .enigo
@@ -451,7 +416,6 @@ impl MyApp {
             } else if !is_held(k) {
                 if !self.state.mouse_key_down.contains(&k) {
                     self.state.mouse_key_down.insert(k);
-                    println!("Insert {:#?}", k);
                 }
             }
             false
@@ -573,31 +537,30 @@ impl MyApp {
 
         for (i, d) in self.state.displays.iter().enumerate() {
             if egui::Rect::from_min_size(d.pos, d.size).contains(mouse_pos) {
-                let region_size = vec2(d.size.x * 0.5, d.size.y * 0.25);
-                let cell_size = vec2(region_size.x / 10.0, region_size.y / 3.0);
+                let rel_pos = mouse_pos - d.pos;
+                let region_size = vec2(d.size.x * 0.25, d.size.y * 0.25);
+                let region_index = vec2(
+                    (rel_pos.x / region_size.x).floor(),
+                    (rel_pos.y / region_size.y).floor(),
+                );
+                self.state.region = (region_index.x + region_index.y * 4.0) as i32;
 
-                let rel_display_pos = mouse_pos - d.pos;
-                let mut cell_x = (rel_display_pos.x / cell_size.x) as i32;
-                let mut cell_y = (rel_display_pos.y / cell_size.y) as i32;
+                let rel_pos = rel_pos
+                    - vec2(
+                        region_size.x * region_index.x,
+                        region_size.y * region_index.y,
+                    );
+                let cell_size = vec2(region_size.x / 5.0, region_size.y / 3.0);
+                let cell_index = vec2(
+                    (rel_pos.x / cell_size.x).floor(),
+                    (rel_pos.y / cell_size.y).floor(),
+                );
+                self.state.cell = (cell_index.x + cell_index.y * 5.0) as i32;
 
                 self.state.mode = Mode::Cell;
                 if i != self.state.current_display {
                     self.move_to_display(ctx, i);
                 }
-
-                self.state.region = cell_y / 3;
-                if cell_x >= 10 {
-                    self.state.region += 4;
-                }
-
-                cell_x %= 10;
-                cell_y %= 3;
-                if cell_x >= 5 {
-                    self.state.cell = 15 + cell_y * 5 + (cell_x - 5);
-                } else {
-                    self.state.cell = cell_y * 5 + cell_x;
-                }
-
                 self.state.mouse_key_down.clear();
                 break;
             }
@@ -619,6 +582,26 @@ impl eframe::App for MyApp {
         egui::Rgba::TRANSPARENT.to_array() // Make sure we don't paint anything behind the rounded corners
     }
 
+    // Hack: egui::input doesn't send key down events for '+' keys for some reason. Investigation needed.
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, _raw_input: &mut egui::RawInput) {
+        for e in  &_raw_input.events {
+            if let egui::Event::Key { key, physical_key, pressed, repeat, .. } = e {
+                if let Some(k) = physical_key {
+                    if *k == Key::Equals && *key == Key::Equals && *pressed == false && *repeat == false {
+                        _raw_input.events.push(egui::Event::Key{
+                            key: Key::Plus,
+                            physical_key: None,
+                            pressed: false,
+                            repeat: false,
+                            modifiers: Default::default(),
+                        });
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
@@ -631,7 +614,6 @@ impl eframe::App for MyApp {
             .frame(egui::Frame::none())
             .show(ctx, |ui| {
                 let painter = ui.painter();
-                let region = self.state.region;
                 let ref display = self.state.displays[self.state.current_display];
                 let origin = Pos2::ZERO - display.offset;
                 let style = &self.state.config.style;
@@ -639,15 +621,19 @@ impl eframe::App for MyApp {
                 let region_line1_stroke = to_stroke(5.0, style.region_line1);
                 let region_line2_stroke = to_stroke(3.0, style.region_line2);
 
-                let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
+                let region_size = vec2(display.size.x * 0.25, display.size.y * 0.25);
+                let cell_size = vec2(region_size.x / 5.0, region_size.y / 3.0);
 
                 if self.state.mode == Mode::Screen {
-                    let rect = Rect::from_min_size(origin, display.size).shrink(5.0);
-                    painter.rect_stroke(rect, Rounding::ZERO, region_line1_stroke);
-                    painter.rect_stroke(rect, Rounding::ZERO, region_line2_stroke);
+                    // Draw screen borders
+                    let screen_border = Rect::from_min_size(origin, display.size).shrink(5.0);
+                    painter.rect_stroke(screen_border, Rounding::ZERO, region_line1_stroke);
+                    painter.rect_stroke(screen_border, Rounding::ZERO, region_line2_stroke);
 
                     let region_grid_line1_stroke = to_stroke(1.5, style.region_grid_line1);
                     let region_grid_line2_stroke = to_stroke(1.5, style.region_grid_line2);
+
+                    // Draw horizontal lines
                     let horizontal_line_count = 12;
                     for i in 1..horizontal_line_count {
                         let percentage = i as f32 / horizontal_line_count as f32;
@@ -658,6 +644,7 @@ impl eframe::App for MyApp {
                         painter.line_segment([left, right], region_grid_line2_stroke);
                     }
 
+                    // Draw vertical lines
                     let vertical_line_count = 20;
                     for i in 1..vertical_line_count {
                         let percentage = i as f32 / vertical_line_count as f32;
@@ -668,232 +655,146 @@ impl eframe::App for MyApp {
                         painter.line_segment([top, btm], region_grid_line2_stroke);
                     }
 
-                    let mut dark_left_color = self.state.config.style.left_grid.clone();
-                    dark_left_color.3 /= 2;
-                    let dark_left_color = to_col(dark_left_color);
-
-                    let mut dark_right_color = self.state.config.style.right_grid.clone();
-                    dark_right_color.3 /= 2;
-                    let dark_right_color = to_col(dark_right_color);
-
-                    let rects = vec![
-                        (
-                            egui::Rect::from_min_size(
-                                origin,
-                                vec2(region_size.x * 0.5, display.size.y),
-                            ),
-                            dark_left_color,
-                        ),
-                        (
-                            egui::Rect::from_min_size(
-                                origin + vec2(region_size.x, 0.0),
-                                vec2(region_size.x * 0.5, display.size.y),
-                            ),
-                            dark_left_color,
-                        ),
-                        (
-                            egui::Rect::from_min_size(
-                                origin + vec2(region_size.x * 0.5, 0.0),
-                                vec2(region_size.x * 0.5, display.size.y),
-                            ),
-                            dark_right_color,
-                        ),
-                        (
-                            egui::Rect::from_min_size(
-                                origin + vec2(region_size.x * 1.5, 0.0),
-                                vec2(region_size.x * 0.5, display.size.y),
-                            ),
-                            dark_right_color,
-                        ),
-                    ];
-                    for (rect, color) in rects {
-                        painter.rect(rect, Rounding::ZERO, color, Stroke::NONE);
-                    }
-
-                    let edges = vec![
-                        (
-                            origin + vec2(display.size.x * 0.0 + 3.0, 0.0),
-                            origin + vec2(display.size.x * 0.0 + 3.0, display.size.y),
-                        ),
-                        (
-                            origin + vec2(display.size.x - 3.0, 0.0),
-                            origin + vec2(display.size.x - 3.0, display.size.y),
-                        ),
-                        (
-                            origin + vec2(display.size.x * 0.5, 0.0),
-                            origin + vec2(display.size.x * 0.5, display.size.y),
-                        ),
-                        (
-                            origin + vec2(0.0, display.size.y * 0.5),
-                            origin + vec2(display.size.x, display.size.y * 0.5),
-                        ),
-                        (
-                            origin + vec2(0.0, display.size.y * 0.25),
-                            origin + vec2(display.size.x, display.size.y * 0.25),
-                        ),
-                        (
-                            origin + vec2(0.0, display.size.y * 0.75),
-                            origin + vec2(display.size.x, display.size.y * 0.75),
-                        ),
-                    ];
-
-                    for edge in edges {
-                        painter.line_segment([edge.0, edge.1], region_line1_stroke);
-                        painter.line_segment([edge.0, edge.1], region_line2_stroke);
-                    }
-
-                    let black_font = egui::FontId::new(30.0, egui::FontFamily::Proportional);
-                    let white_font = egui::FontId::new(25.0, egui::FontFamily::Proportional);
-                    let opts = vec![
-                        (0.25, 0.5, "A"),
-                        (0.25, 1.5, "S"),
-                        (0.25, 2.5, "D"),
-                        (0.25, 3.5, "F"),
-                        (1.25, 0.5, "J"),
-                        (1.25, 1.5, "K"),
-                        (1.25, 2.5, "L"),
-                        (1.25, 3.5, "Semi"),
-                    ];
-                    for (x, y, text) in opts {
-                        painter.text(
-                            origin + vec2(region_size.x * x, region_size.y * y),
-                            Align2::CENTER_CENTER,
-                            text,
-                            black_font.clone(),
-                            Color32::BLACK,
+                    // Draw region stripes
+                    for i in 0..4 {
+                        let rect = egui::Rect::from_min_size(
+                            origin + vec2(0.0, i as f32 * region_size.y),
+                            vec2(display.size.x, region_size.y),
                         );
+                        let mut color = if i % 2 == 0 {
+                            self.state.config.style.left_grid.clone()
+                        } else {
+                            self.state.config.style.right_grid.clone()
+                        };
+
+                        painter.rect(rect, Rounding::ZERO, to_col(color), Stroke::NONE);
+                    }
+
+                    let black_font = egui::FontId::new(60.0, egui::FontFamily::Proportional);
+                    let white_font = egui::FontId::new(60.0, egui::FontFamily::Proportional);
+
+                    let region_line1_stroke = to_stroke(2.0, style.region_line1);
+                    let region_line2_stroke = to_stroke(1.0, style.region_line2);
+                    for (i, key) in self.state.config.key_bindings.region.iter().enumerate() {
+                        let region_x = (i % 4) as f32;
+                        let region_y = (i / 4) as f32;
+
+                        let text_pos = origin
+                            + vec2(
+                                (region_x + 0.5) * region_size.x,
+                                (region_y + 0.5) * region_size.y,
+                            );
+
+                        // Draw region text
+                        for i in 0..9 {
+                            painter.text(
+                                text_pos
+                                    + vec2(((i % 3) - 1) as f32 * 3.0, ((i / 3) - 1) as f32 * 3.0),
+                                Align2::CENTER_CENTER,
+                                key.name(),
+                                black_font.clone(),
+                                Color32::BLACK,
+                            );
+                        }
                         painter.text(
-                            origin + vec2(region_size.x * x, region_size.y * y),
+                            text_pos,
                             Align2::CENTER_CENTER,
-                            text,
+                            key.name(),
                             white_font.clone(),
                             Color32::WHITE,
                         );
 
-                        painter.text(
-                            origin + vec2(region_size.x * (x + 0.5), region_size.y * y),
-                            Align2::CENTER_CENTER,
-                            text,
-                            black_font.clone(),
-                            Color32::BLACK,
+                        // Draw region outline
+                        let rect_pos =
+                            origin + vec2(region_x * region_size.x, region_y * region_size.y);
+                        painter.rect_stroke(
+                            Rect::from_min_size(rect_pos, region_size),
+                            Rounding::ZERO,
+                            region_line1_stroke,
                         );
-                        painter.text(
-                            origin + vec2(region_size.x * (x + 0.5), region_size.y * y),
-                            Align2::CENTER_CENTER,
-                            text,
-                            white_font.clone(),
-                            Color32::WHITE,
+                        painter.rect_stroke(
+                            Rect::from_min_size(rect_pos, region_size),
+                            Rounding::ZERO,
+                            region_line2_stroke,
                         );
                     }
                 } else if self.state.mode == Mode::Narrow {
-                    let mut origin = origin;
-                    if region < 4 {
-                        origin += vec2(display.size.x * 0.0, display.size.y * 0.25 * region as f32);
-                    } else {
-                        origin += vec2(
-                            display.size.x * 0.5,
-                            display.size.y * 0.25 * (region - 4) as f32,
+                    let origin = origin
+                        + vec2(
+                            region_size.x * (self.state.region % 4) as f32,
+                            region_size.y * (self.state.region / 4) as f32,
                         );
-                    }
 
-                    for i in 0..11 {
-                        let i = i as f32;
-                        let start = origin + vec2(region_size.x * i * 0.1, 0.0);
-                        let end = origin + vec2(region_size.x * i * 0.1, region_size.y);
-                        painter.line_segment([start, end], region_line1_stroke);
-                        painter.line_segment([start, end], region_line2_stroke);
-                    }
-
-                    for i in 0..4 {
-                        let i = i as f32;
-                        let start = origin + vec2(0.0, region_size.y * i * 0.333);
-                        let end = origin + vec2(region_size.x, region_size.y * i * 0.333);
-                        painter.line_segment([start, end], region_line1_stroke);
-                        painter.line_segment([start, end], region_line2_stroke);
-                    }
-
-                    let left_color = Color32::from_rgba_unmultiplied(
-                        style.left_grid.0,
-                        style.left_grid.1,
-                        style.left_grid.2,
-                        style.left_grid.3,
-                    );
-                    let left_rect = egui::Rect::from_two_pos(
-                        origin,
-                        origin + vec2(region_size.x * 0.5, region_size.y),
-                    );
-                    painter.rect(left_rect, Rounding::ZERO, left_color, Stroke::NONE);
-
-                    let right_color = Color32::from_rgba_unmultiplied(
-                        style.right_grid.0,
-                        style.right_grid.1,
-                        style.right_grid.2,
-                        style.right_grid.3,
-                    );
-                    let right_rect = egui::Rect::from_two_pos(
-                        origin + vec2(region_size.x * 0.5, 0.0),
-                        origin + vec2(region_size.x, region_size.y),
-                    );
+                    // Draw region background
+                    let right_color = to_col(style.right_grid);
+                    let right_rect =
+                        egui::Rect::from_min_size(origin, vec2(region_size.x, region_size.y));
                     painter.rect(right_rect, Rounding::ZERO, right_color, Stroke::NONE);
 
-                    let black_font = egui::FontId::new(27.0, egui::FontFamily::Proportional);
-                    let white_font = egui::FontId::new(20.0, egui::FontFamily::Proportional);
-                    painter.text(
-                        origin + vec2(region_size.x * 0.65, region_size.y * 0.5),
-                        Align2::CENTER_CENTER,
-                        "J",
-                        black_font.clone(),
-                        Color32::BLACK,
-                    );
-                    painter.text(
-                        origin + vec2(region_size.x * 0.35, region_size.y * 0.5),
-                        Align2::CENTER_CENTER,
-                        "F",
-                        black_font,
-                        Color32::BLACK,
-                    );
-
-                    painter.text(
-                        origin + vec2(region_size.x * 0.65, region_size.y * 0.5),
-                        Align2::CENTER_CENTER,
-                        "J",
-                        white_font.clone(),
-                        Color32::WHITE,
-                    );
-                    painter.text(
-                        origin + vec2(region_size.x * 0.35, region_size.y * 0.5),
-                        Align2::CENTER_CENTER,
-                        "F",
-                        white_font,
-                        Color32::WHITE,
-                    );
-                } else if self.state.mode == Mode::Cell {
-                    let mut origin = origin;
-                    let region_size = vec2(display.size.x * 0.5, display.size.y * 0.25);
-                    let cell_size = vec2(region_size.x * 0.1, region_size.y / 3.0);
-
-                    if region < 4 {
-                        origin += vec2(0.0, region_size.y * region as f32);
-                    } else {
-                        origin += vec2(region_size.x, region_size.y * (region - 4) as f32);
+                    // Draw cell vertical lines
+                    for i in 0..6 {
+                        let i = i as f32;
+                        let start = origin + vec2(i * cell_size.x, 0.0);
+                        let end = origin + vec2(i * cell_size.x, region_size.y);
+                        painter.line_segment([start, end], region_line1_stroke);
+                        painter.line_segment([start, end], region_line2_stroke);
                     }
 
-                    let col = self.state.cell % 5;
-                    let row = (self.state.cell % 15) / 5;
+                    // Draw cell horizontal lines
+                    for i in 0..4 {
+                        let i = i as f32;
+                        let start = origin + vec2(0.0, i * cell_size.y);
+                        let end = origin + vec2(region_size.x, i * cell_size.y);
+                        painter.line_segment([start, end], region_line1_stroke);
+                        painter.line_segment([start, end], region_line2_stroke);
+                    }
 
-                    origin.x += col as f32 * cell_size.x;
-                    origin.y += row as f32 * cell_size.y;
+                    // Draw cell text
+                    let black_font = egui::FontId::new(27.0, egui::FontFamily::Proportional);
+                    let white_font = egui::FontId::new(20.0, egui::FontFamily::Proportional);
+                    let text_offset = 6;
+                    for i in 0..3 {
+                        let pos = origin + vec2((i as f32 + 1.5) * cell_size.x, cell_size.y * 1.5);
+                        let text = self.state.config.key_bindings.grid[text_offset + i].name();
 
-                    let color = if self.state.cell >= 15 {
-                        origin.x += region_size.x * 0.5;
-                        style.right_grid
-                    } else {
-                        style.left_grid
-                    };
-                    let color = Color32::from_rgba_unmultiplied(color.0, color.1, color.2, color.3);
+                        for j in 0..9 {
+                            painter.text(
+                                pos
+                                    + vec2(((j % 3) - 1) as f32 * 1.5, ((j / 3) - 1) as f32 * 1.5),
+                                Align2::CENTER_CENTER,
+                                text,
+                                black_font.clone(),
+                                Color32::BLACK,
+                            );
+                        }
 
+                        painter.text(
+                            pos,
+                            Align2::CENTER_CENTER,
+                            text,
+                            white_font.clone(),
+                            Color32::WHITE,
+                        );
+                    }
+                } else if self.state.mode == Mode::Cell {
+                    let origin = origin
+                        + vec2(
+                            region_size.x * (self.state.region % 4) as f32,
+                            region_size.y * (self.state.region / 4) as f32,
+                        )
+                        + vec2(
+                            cell_size.x * (self.state.cell % 5) as f32,
+                            cell_size.y * (self.state.cell / 5) as f32,
+                        );
+
+                    // Draw cell borders
+                    let cell_border = Rect::from_min_size(origin, cell_size).shrink(5.0);
+                    painter.rect_stroke(cell_border, Rounding::ZERO, region_line1_stroke);
+                    painter.rect_stroke(cell_border, Rounding::ZERO, region_line2_stroke);
+
+                    // Draw cell background
                     let rect = egui::Rect::from_min_size(origin, cell_size);
-                    painter.rect(rect, Rounding::ZERO, color, Stroke::NONE);
+                    painter.rect(rect, Rounding::ZERO, to_col(style.right_grid), Stroke::NONE);
                 }
 
                 let color = Color32::from_rgba_premultiplied(28, 92, 48, 120);
