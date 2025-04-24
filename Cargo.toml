@@ -1,0 +1,23 @@
+[package]
+name = "kmgrid"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+display-info = "0.5.3"
+device_query = "3.0.0"
+egui = "0.30.0"
+enigo = "0.3.0"
+
+
+eframe = { version = "0.30.0", features = [
+    "default",
+    "__screenshot", # __screenshot is so we can dump a screenshot using EFRAME_SCREENSHOT_TO
+] }
+
+env_logger = { version = "0.10", default-features = false, features = [
+    "auto-color",
+    "humantime",
+] }
+serde_json = "1.0.138"
+serde = "1.0.217"
