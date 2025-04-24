@@ -12,7 +12,6 @@ use device_query::{DeviceQuery, DeviceState, Keycode};
 
 #[derive(Clone, Copy)]
 struct Display {
-    id: i32,
     pos: Pos2,
     size: Vec2,
     offset: Vec2,
@@ -223,7 +222,6 @@ fn main() -> eframe::Result {
     let displays: Vec<_> = display_infos
         .iter()
         .map(|d| Display {
-            id: d.id as i32,
             pos: pos2(d.x as f32, d.y as f32),
             size: vec2(d.width as f32, d.height as f32),
             offset: if d.is_primary {
@@ -251,6 +249,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_decorations(false) // Hide the OS-specific "chrome" around the window
+            .with_window_type(egui::X11WindowType::Utility)
             .with_mouse_passthrough(true)
             .with_always_on_top()
             .with_transparent(true)
@@ -258,12 +257,6 @@ fn main() -> eframe::Result {
             .with_resizable(false)
             .with_maximized(false)
             .with_inner_size(displays[initial_display_idx].size)
-            // .with_inner_size(vec2(500.0, 500.0))
-            // .with_max_inner_size(vec2(500.0, 500.0))
-            // .with_min_inner_size(vec2(500.0, 500.0))
-            // .with_inner_size(vec2(w as f32, h as f32))
-            // .with_max_inner_size(vec2(w as f32, h as f32))
-            // .with_min_inner_size(vec2(w as f32, h as f32))
             .with_fullscreen(false),
         ..Default::default()
     };
@@ -661,7 +654,7 @@ impl eframe::App for MyApp {
                             origin + vec2(0.0, i as f32 * region_size.y),
                             vec2(display.size.x, region_size.y),
                         );
-                        let mut color = if i % 2 == 0 {
+                        let color = if i % 2 == 0 {
                             self.state.config.style.left_grid.clone()
                         } else {
                             self.state.config.style.right_grid.clone()
